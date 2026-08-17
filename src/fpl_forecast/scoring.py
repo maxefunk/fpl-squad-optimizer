@@ -57,6 +57,20 @@ def _per90(total: float, minutes: float) -> float:
     return total / minutes * 90.0
 
 
+def _safe_ratio(numerator: float, denominator: float, default: float = 1.0) -> float:
+    """numerator / denominator, or `default` if denominator isn't usable.
+
+    FPL's team strength ratings (strength_attack_*/strength_defence_*) can
+    legitimately be 0 for every team early in a season, before the API has
+    populated them -- most notably around gameweek 1. Treating a missing
+    rating as "average" (ratio 1.0) degrades gracefully to a fixture-neutral
+    estimate instead of crashing.
+    """
+    if denominator <= 0:
+        return default
+    return numerator / denominator
+
+
 # ---------------------------------------------------------------------------
 # Team strength / fixture impact
 # ---------------------------------------------------------------------------
@@ -105,8 +119,16 @@ def fixture_impact(team_id: int, opponent_id: int, is_home: bool, strength: dict
     opp_attack = opp["attack_away"] if is_home else opp["attack_home"]
     opp_defence = opp["defence_away"] if is_home else opp["defence_home"]
 
-    lambda_against = LEAGUE_AVG_GOALS_PER_TEAM * (opp_attack / avg_attack) * (avg_defence / own_defence)
-    lambda_for = LEAGUE_AVG_GOALS_PER_TEAM * (own_attack / avg_attack) * (avg_defence / opp_defence)
+    lambda_against = (
+        LEAGUE_AVG_GOALS_PER_TEAM
+        * _safe_ratio(opp_attack, avg_attack)
+        * _safe_ratio(avg_defence, own_defence)
+    )
+    lambda_for = (
+        LEAGUE_AVG_GOALS_PER_TEAM
+        * _safe_ratio(own_attack, avg_attack)
+        * _safe_ratio(avg_defence, opp_defence)
+    )
 
     clean_sheet_prob = pow(2.71828182845904523536, -lambda_against)
     clean_sheet_prob = max(0.02, min(0.75, clean_sheet_prob))

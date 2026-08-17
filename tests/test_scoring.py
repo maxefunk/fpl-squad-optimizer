@@ -70,6 +70,18 @@ def test_fixture_impact_home_advantage_for_strong_attack_vs_weak_defence():
     assert attack_mult > 1.0  # team 1 attacks a weaker defence than average
 
 
+def test_fixture_impact_handles_unpopulated_zero_strength_ratings():
+    # Early in a new season (e.g. gameweek 1), the FPL API can report every
+    # team's strength_attack_*/strength_defence_* as 0 before it has
+    # computed real ratings. This must degrade to a neutral estimate
+    # instead of raising ZeroDivisionError (regression test).
+    strength = build_team_strength_lookup([_team(1, attack=0, defence=0), _team(2, attack=0, defence=0)])
+    cs_prob, attack_mult, lambda_against = fixture_impact(1, 2, True, strength)
+    assert 0.0 < cs_prob < 1.0
+    assert attack_mult == 1.0
+    assert lambda_against > 0.0
+
+
 def test_team_fixtures_for_gw_handles_double_and_blank():
     fixtures = [
         {"team_h": 1, "team_a": 2, "team_h_difficulty": 3, "team_a_difficulty": 4},

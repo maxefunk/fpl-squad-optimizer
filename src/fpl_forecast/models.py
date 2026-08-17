@@ -22,6 +22,15 @@ class PlayerScore:
     num_fixtures: int
     reasons: list[str] = field(default_factory=list)
 
+    # Structured breakdown (same numbers as in `reasons`, but typed for
+    # display -- e.g. the HTML report's player-pool table and glossary).
+    model_component: float = 0.0
+    form_component: float = 0.0
+    season_component: float = 0.0
+    clean_sheet_prob: float | None = None  # None for FWD (no CS points)
+    data_confidence: float = 1.0  # 0-1: how much minutes back the season/form numbers
+    fixture_desc: str = ""  # e.g. "TOT (H, FDR 3)" or "ARS (H, FDR 2), CHE (A, FDR 4)"
+
     @property
     def is_playing(self) -> bool:
         return self.num_fixtures > 0 and self.availability_prob > 0.0

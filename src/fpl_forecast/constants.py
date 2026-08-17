@@ -49,3 +49,30 @@ MIN_SEASON_MINUTES_FOR_SIGNAL = 90
 # Minutes threshold in a single match to count as a "start" for the
 # rotation-risk / nailed-on heuristic.
 START_MINUTES_THRESHOLD = 60
+
+# -- Small-sample confidence shrinkage --------------------------------------
+# A player with only a couple of great cameos shouldn't get the same trust
+# in their points-per-game as one with a near-full season behind it. Below
+# MIN_MINUTES_FOR_FULL_CONFIDENCE minutes, season/no-history-form components
+# are blended toward NEUTRAL_PPG_PRIOR in proportion to how little data
+# backs them (confidence = minutes / MIN_MINUTES_FOR_FULL_CONFIDENCE).
+MIN_MINUTES_FOR_FULL_CONFIDENCE = 900  # ~10 full matches
+NEUTRAL_PPG_PRIOR = 2.0  # a roughly average points-per-game across all outfield players
+
+# -- Past-season availability fallback --------------------------------------
+# When a player has no current-season per-GW history yet (most notably
+# gameweek 1 of a new season), fall back to how much they played in the
+# most recent completed season (element-summary "history_past") as a proxy
+# for "are they actually in the matchday XI most weeks". Thresholds are in
+# minutes-equivalent full matches (minutes / 90).
+PAST_SEASON_GAMES_NAILED = 25  # played the bulk of a season -> likely a starter
+PAST_SEASON_GAMES_ROTATION = 12  # regular squad player, some rotation
+PAST_SEASON_GAMES_FRINGE = 3  # occasional cameos only
+
+AVAILABILITY_PAST_SEASON_NAILED = 0.80
+AVAILABILITY_PAST_SEASON_ROTATION = 0.55
+AVAILABILITY_PAST_SEASON_FRINGE = 0.30
+AVAILABILITY_NO_DATA = 0.15  # no current- or past-season signal at all (new to the PL, academy graduate, etc.)
+
+# Fixture-ticker window shown in the HTML report.
+FIXTURE_TICKER_GWS = 5

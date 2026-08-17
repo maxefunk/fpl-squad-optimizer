@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fpl_forecast.formatting_html import render_html
 from fpl_forecast.optimizer import optimize_squad
+from fpl_forecast.scoring import build_fixture_ticker
 from tests.conftest import make_player
 
 
@@ -56,3 +57,58 @@ def test_render_html_escapes_special_characters():
     assert "O&#x27;Br" in html
     assert "&lt;i&gt;" in html
     assert "&amp;" in html
+
+
+def test_render_html_includes_glossary():
+    html = render_html(_make_minimal_result(), gameweek=1)
+    assert "What do these numbers mean?" in html
+    assert "xPts (Expected Points)" in html
+    assert "FDR (Fixture Difficulty Rating)" in html
+
+
+def test_render_html_includes_fixture_ticker_when_provided(sample_pool):
+    result = optimize_squad(sample_pool, budget=100.0, max_per_club=3)
+    teams = [{"id": i, "short_name": f"T{i}"} for i in range(1, 11)]
+    # Only team 1 gets a fixture in the window; every other squad team blanks.
+    all_fixtures = [
+        {"event": 5, "team_h": 1, "team_a": 2, "team_h_difficulty": 2, "team_a_difficulty": 4},
+    ]
+    ticker = build_fixture_ticker(teams, all_fixtures, start_gw=5, num_gws=5)
+
+    html = render_html(result, gameweek=5, fixture_ticker=ticker)
+
+    assert "Upcoming fixtures" in html
+    squad_team_ids = {p.team_id for p in result.squad}
+    if 1 in squad_team_ids:
+        assert "fdr-box" in html
+    assert "BLANK" in html  # at least one squad club has no fixture in this contrived window
+
+
+def test_render_html_includes_player_pool_when_provided(sample_pool):
+    result = optimize_squad(sample_pool, budget=100.0, max_per_club=3)
+    html = render_html(result, gameweek=1, all_scores=sample_pool)
+
+    assert "Who else was in the mix" in html
+    assert 'class="picked"' in html  # at least one squad player appears highlighted in the pool table
+    assert "picked-mark" in html
+
+
+def _make_minimal_result():
+    pool = [
+        make_player(1, "GK", 1, 4.5, 5.0),
+        make_player(2, "GK", 2, 4.0, 1.0),
+        make_player(3, "DEF", 1, 4.0, 5.0),
+        make_player(4, "DEF", 2, 4.0, 4.0),
+        make_player(5, "DEF", 3, 4.0, 3.0),
+        make_player(6, "DEF", 4, 4.0, 2.0),
+        make_player(7, "DEF", 5, 4.0, 1.0),
+        make_player(8, "MID", 3, 4.5, 5.0),
+        make_player(9, "MID", 4, 4.5, 4.0),
+        make_player(10, "MID", 5, 4.5, 3.0),
+        make_player(11, "MID", 1, 4.5, 2.0),
+        make_player(12, "MID", 2, 4.5, 1.0),
+        make_player(13, "FWD", 3, 4.5, 5.0),
+        make_player(14, "FWD", 4, 4.5, 4.0),
+        make_player(15, "FWD", 5, 4.5, 3.0),
+    ]
+    return optimize_squad(pool, budget=100.0, max_per_club=3)

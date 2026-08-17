@@ -51,9 +51,20 @@ python -m fpl_forecast --gameweek 5 --html squad.html
 ```
 
 `--html` writes a self-contained report (inline CSS, no external
-requests) with the starting XI laid out on a pitch by position, captain/
-vice-captain badges, a budget bar, the bench in sub order, and the
-reasoning behind the top picks — open the file directly in a browser.
+requests) with:
+
+- the starting XI laid out on a pitch by position, captain/vice-captain
+  badges, a budget bar, and the bench in sub order;
+- availability% and "rotation risk" / "limited data" flags on every card;
+- each squad club's next 5 gameweeks of fixtures, colour-coded by FDR;
+- a "who else was in the mix" table per position (top 8 by xPts, with the
+  squad's actual picks highlighted) so you can see the alternatives, not
+  just the final XI;
+- the reasoning behind the top picks;
+- a glossary explaining the terminology (xPts, FDR, availability%, clean
+  sheet %, etc.).
+
+Open the file directly in a browser.
 
 API responses are cached to `data/cache/` (gitignored) so repeat runs are
 fast and don't hammer the FPL API. `--refresh` forces a live refetch.
@@ -148,11 +159,30 @@ taker, MID/FWD only).
 
 **Minutes reliability / rotation risk**: availability probability comes
 from, in priority order: (1) the API's own `chance_of_playing_next_round`
-if set; (2) the fraction of the last 6 gameweeks where the player started
-(≥60 minutes), from `element-summary` history; (3) a conservative default
-based on season-long minutes for players with no recent history. This is
-what keeps the optimizer from recommending nailed-off bench players just
-because their per-90 stats look good in a small sample.
+if set — note this only flags injury/fitness doubts, not squad-role
+competition, so a fully-fit backup goalkeeper still reports 100 here; (2)
+the fraction of the last 6 gameweeks where the player started (≥60
+minutes), from `element-summary` history; (3) **when there's no
+current-season history yet (most notably gameweek 1 of a new season)**,
+how many games-equivalent (`minutes / 90`) they played in the most
+recently completed season, from `element-summary`'s `history_past` — ≥25
+games reads as nailed-on (0.80), ≥12 as a rotation-squad player (0.55),
+≥3 as occasional cameos only (0.30), and less than that (or a genuinely
+new-to-the-league player with no past-season record either) as unproven
+(0.15); (4) a conservative default based on current season-long minutes
+if none of the above apply. This is what keeps the optimizer from
+recommending a backup keeper or fringe squad player just because their
+per-90 stats look good in a tiny sample.
+
+**Small-sample confidence shrinkage**: a player with only a couple of
+big cameos shouldn't get the same trust in their points-per-game as one
+with a near-full season behind it — otherwise one great 90 minutes can
+make a fringe player look like a nailed starter. Below ~900 minutes
+(10 full matches), the season-prior and no-history-form components are
+blended toward a neutral points-per-game baseline (2.0) in proportion to
+how little playing time backs them
+(`confidence = minutes / 900`, capped at 1.0). The HTML report surfaces
+this directly as a "limited data" flag on any player below 30% confidence.
 
 **Double/blank gameweeks**: a player's team may have 0, 1, or 2 fixtures
 in the target gameweek. Blank-gameweek players score 0 xPts (the optimizer
@@ -187,6 +217,25 @@ then the bench goalkeeper last.
 
 ## Known limitations
 
+- **Team strength ratings (and therefore FDR / clean-sheet estimates) can
+  lag real squad changes.** `strength_attack_*`/`strength_defence_*` come
+  straight from the FPL API, which derives them largely from recent
+  results — they're slow to reflect a summer of transfer activity. A team
+  that strengthened significantly (or weakened) in the close season will
+  still look like last season's version of itself in the fixture
+  difficulty and clean-sheet numbers until enough of the new season has
+  been played to move the ratings. The HTML report now surfaces this
+  caveat directly next to the fixture ticker rather than only in this
+  README.
+- **New signings and players new to the Premier League have essentially
+  no usable signal.** The model leans on `element-summary` history
+  (this season) and `history_past` (last completed PL season) for
+  form/availability. A player arriving from abroad, or promoted from a
+  lower league, has neither — they fall through to the lowest-confidence
+  defaults (see "Small-sample confidence shrinkage" and the past-season
+  availability tiers above) rather than being actively researched. This
+  is a real, currently-unsolved gap: the free FPL API simply doesn't
+  expose non-PL history.
 - **Heuristic scoring, not a fitted model.** The xPts weights (45/35/20,
   the set-piece bonus sizes, the Poisson calibration constant) are
   reasonable starting points, not fit to historical accuracy. The

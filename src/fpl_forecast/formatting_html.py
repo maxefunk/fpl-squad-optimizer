@@ -4,6 +4,11 @@ Produces a single standalone .html file (inline CSS, no external
 requests) suitable for opening directly in a browser. This is separate
 from the plain-text CLI summary in formatting.py -- both are generated
 from the same SquadResult, they just render it differently.
+
+Beyond the squad itself, the report also shows: each squad team's
+upcoming fixture run (FDR-coloured), a wider "who else was in the mix"
+table per position, and a glossary explaining the model's terminology --
+so the report is readable without cross-referencing the README.
 """
 
 from __future__ import annotations
@@ -11,10 +16,32 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from html import escape
 
-from fpl_forecast.constants import POSITION_ORDER
+from fpl_forecast.constants import FIXTURE_TICKER_GWS, POSITION_ORDER
 from fpl_forecast.models import PlayerScore, SquadResult
 
 _POSITION_LABELS = {"GK": "Goalkeepers", "DEF": "Defenders", "MID": "Midfielders", "FWD": "Forwards"}
+
+# FDR 1 (easiest) -> 5 (hardest), matching the FPL app's traffic-light convention.
+_FDR_COLORS = {
+    1: "#1f9d55",
+    2: "#34d399",
+    3: "#f5c542",
+    4: "#e8834f",
+    5: "#e05252",
+}
+
+
+def _fdr_color(difficulty: int) -> str:
+    return _FDR_COLORS.get(difficulty, "#5a6b8c")
+
+
+def _risk_tags(p: PlayerScore) -> str:
+    tags = []
+    if p.availability_prob < 0.5:
+        tags.append('<span class="tag tag-risk">rotation risk</span>')
+    if p.data_confidence < 0.3:
+        tags.append('<span class="tag tag-warn">limited data</span>')
+    return "".join(tags)
 
 
 def _card(p: PlayerScore, result: SquadResult, sub_index: int | None = None) -> str:
@@ -28,6 +55,8 @@ def _card(p: PlayerScore, result: SquadResult, sub_index: int | None = None) -> 
         card_class += " vice"
 
     sub_label = f'<div class="sub-index">{sub_index}</div>' if sub_index is not None else ""
+    tags = _risk_tags(p)
+    tags_html = f'<div class="card-tags">{tags}</div>' if tags else ""
 
     return f"""
     <div class="{card_class}">
@@ -35,11 +64,153 @@ def _card(p: PlayerScore, result: SquadResult, sub_index: int | None = None) -> 
       <div class="name">{escape(p.web_name)}</div>
       <div class="meta">{escape(p.team_short)} &middot; £{p.now_cost:.1f}m</div>
       <div class="xpts">{p.xpts:.2f} xPts</div>
+      <div class="avail">{p.availability_prob:.0%} avail</div>
+      {tags_html}
     </div>
     """.strip()
 
 
-def render_html(result: SquadResult, gameweek: int, generated_at: str | None = None) -> str:
+def _fixture_ticker_html(ticker: dict[int, list[dict]] | None, squad: list[PlayerScore]) -> str:
+    if not ticker:
+        return ""
+
+    seen: dict[int, str] = {}
+    for p in squad:
+        seen.setdefault(p.team_id, p.team_short)
+
+    rows = []
+    for team_id, team_short in sorted(seen.items(), key=lambda kv: kv[1]):
+        fixtures = ticker.get(team_id, [])
+        if not fixtures:
+            boxes = '<span class="fdr-box fdr-blank">BLANK</span>'
+        else:
+            boxes = "".join(
+                f'<span class="fdr-box" style="background:{_fdr_color(f["difficulty"])}" '
+                f'title="GW{f["event"]}: {escape(f["opponent"])} ({"H" if f["is_home"] else "A"}), FDR {f["difficulty"]}">'
+                f'{escape(f["opponent"])} {"(H)" if f["is_home"] else "(A)"}'
+                f"</span>"
+                for f in fixtures
+            )
+        rows.append(
+            f"""
+            <div class="ticker-row">
+              <div class="ticker-team">{escape(team_short)}</div>
+              <div class="ticker-fixtures">{boxes}</div>
+            </div>
+            """
+        )
+
+    return f"""
+    <div class="ticker-section">
+      <h2>Upcoming fixtures (squad clubs, next {FIXTURE_TICKER_GWS} GWs)</h2>
+      <div class="ticker-caveat">
+        Colour = FDR (green easiest &rarr; red hardest), from the FPL API's own team
+        strength ratings. These are informed by prior seasons and can lag real
+        squad changes (transfers, managerial changes) &mdash; especially early
+        in a new season.
+      </div>
+      {''.join(rows)}
+    </div>
+    """
+
+
+def _player_pool_tables_html(all_scores: list[PlayerScore] | None, squad_ids: set[int], top_n: int = 8) -> str:
+    if not all_scores:
+        return ""
+
+    sections = []
+    for pos in POSITION_ORDER:
+        pool = sorted((p for p in all_scores if p.position == pos), key=lambda p: p.xpts, reverse=True)[:top_n]
+        if not pool:
+            continue
+        rows = []
+        for p in pool:
+            picked = p.element_id in squad_ids
+            row_class = "picked" if picked else ""
+            cs = f"{p.clean_sheet_prob:.0%}" if p.clean_sheet_prob is not None else "&ndash;"
+            tags = _risk_tags(p)
+            rows.append(
+                f"""
+                <tr class="{row_class}">
+                  <td>{escape(p.web_name)}{' <span class="picked-mark">&#10003; squad</span>' if picked else ''}</td>
+                  <td>{escape(p.team_short)}</td>
+                  <td>£{p.now_cost:.1f}m</td>
+                  <td>{p.xpts:.2f}</td>
+                  <td>{p.availability_prob:.0%}</td>
+                  <td>{cs}</td>
+                  <td>{escape(p.fixture_desc) or '&ndash;'}</td>
+                  <td>{tags or '&ndash;'}</td>
+                </tr>
+                """
+            )
+        sections.append(
+            f"""
+            <div class="pool-table-wrap">
+              <h3>{_POSITION_LABELS[pos]}</h3>
+              <div class="table-scroll">
+              <table class="pool-table">
+                <thead>
+                  <tr>
+                    <th>Player</th><th>Team</th><th>Price</th><th>xPts</th>
+                    <th>Avail.</th><th>CS%</th><th>Fixture(s)</th><th>Flags</th>
+                  </tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+              </table>
+              </div>
+            </div>
+            """
+        )
+
+    return f"""
+    <div class="pool-section">
+      <h2>Who else was in the mix (top {top_n} per position by xPts)</h2>
+      {''.join(sections)}
+    </div>
+    """
+
+
+_GLOSSARY = [
+    ("xPts (Expected Points)", "The model's projected FPL points for this gameweek: a blend of a "
+     "fixture-adjusted statistical estimate, recent form, and season-long output, scaled by how "
+     "likely the player is to actually play."),
+    ("FDR (Fixture Difficulty Rating)", "The FPL API's own 1 (easiest) to 5 (hardest) rating of how "
+     "tough an opponent is, from the perspective of the team being rated."),
+    ("Availability %", "The model's estimate of the probability a player features meaningfully this "
+     "gameweek, from injury/fitness flags, recent starts, or last season's minutes when there's no "
+     "current-season data yet."),
+    ("Clean Sheet % (CS%)", "Estimated probability the player's team doesn't concede in this fixture, "
+     "from a simplified Poisson model built on the FPL API's team strength ratings."),
+    ("Limited data / rotation risk flags", "\"Limited data\" means the season/form numbers are backed "
+     "by only a handful of minutes played, so a hot small-sample points-per-game is discounted toward "
+     "a neutral baseline rather than trusted outright. \"Rotation risk\" means under 50% estimated "
+     "availability."),
+    ("Formation", "The DEF-MID-FWD counts in the starting XI (goalkeeper is always exactly 1)."),
+    ("Captain / Vice-Captain", "The two highest-xPts starters. In real FPL scoring the captain's points "
+     "are doubled (falling back to the vice-captain's if the captain doesn't play)."),
+    ("Budget", "Total squad cost against the configurable cap (default £100.0m)."),
+]
+
+
+def _glossary_html() -> str:
+    items = "".join(
+        f"<dt>{escape(term)}</dt><dd>{escape(definition)}</dd>" for term, definition in _GLOSSARY
+    )
+    return f"""
+    <div class="glossary-section">
+      <h2>What do these numbers mean?</h2>
+      <dl class="glossary">{items}</dl>
+    </div>
+    """
+
+
+def render_html(
+    result: SquadResult,
+    gameweek: int,
+    generated_at: str | None = None,
+    all_scores: list[PlayerScore] | None = None,
+    fixture_ticker: dict[int, list[dict]] | None = None,
+) -> str:
     if generated_at is None:
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -69,6 +240,7 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
         )
 
     budget_pct = min(100.0, (result.total_cost / result.budget * 100.0) if result.budget else 0.0)
+    squad_ids = {p.element_id for p in result.squad}
 
     return f"""<!doctype html>
 <html lang="en">
@@ -88,6 +260,8 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
     --accent: #34d399;
     --gold: #f5c542;
     --silver: #c9d3e0;
+    --warn: #e8834f;
+    --risk: #e05252;
   }}
   * {{ box-sizing: border-box; }}
   body {{
@@ -97,8 +271,10 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }}
-  .wrap {{ max-width: 960px; margin: 0 auto; }}
+  .wrap {{ max-width: 1080px; margin: 0 auto; }}
   h1 {{ font-size: 1.5rem; margin: 0 0 0.25rem; }}
+  h2 {{ font-size: 1.05rem; color: var(--text-dim); font-weight: 600; margin: 0 0 0.75rem; }}
+  h3 {{ font-size: 0.95rem; color: var(--text); font-weight: 600; margin: 1rem 0 0.5rem; }}
   .subtitle {{ color: var(--text-dim); margin-bottom: 1.5rem; }}
 
   .summary {{
@@ -144,7 +320,7 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 10px;
     padding: 0.6rem 0.9rem;
-    min-width: 108px;
+    min-width: 116px;
     text-align: center;
     position: relative;
   }}
@@ -153,6 +329,8 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
   .card .name {{ font-weight: 600; font-size: 0.92rem; }}
   .card .meta {{ color: var(--text-dim); font-size: 0.75rem; margin-top: 0.15rem; }}
   .card .xpts {{ color: var(--accent); font-size: 0.85rem; margin-top: 0.3rem; font-weight: 600; }}
+  .card .avail {{ color: var(--text-dim); font-size: 0.7rem; margin-top: 0.1rem; }}
+  .card-tags {{ margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.25rem; justify-content: center; }}
   .badge {{
     position: absolute; top: -8px; right: -8px;
     font-size: 0.65rem; font-weight: 700;
@@ -163,8 +341,14 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
   .badge-c {{ background: var(--gold); }}
   .badge-vc {{ background: var(--silver); }}
 
+  .tag {{
+    font-size: 0.62rem; font-weight: 600; padding: 0.1rem 0.4rem;
+    border-radius: 999px; white-space: nowrap;
+  }}
+  .tag-risk {{ background: rgba(224, 82, 82, 0.18); color: #ff9c9c; }}
+  .tag-warn {{ background: rgba(232, 131, 79, 0.18); color: #ffb98a; }}
+
   .bench-section {{ margin-top: 1.5rem; }}
-  .bench-section h2 {{ font-size: 1.05rem; color: var(--text-dim); font-weight: 600; margin-bottom: 0.75rem; }}
   .bench-row {{ display: flex; flex-wrap: wrap; gap: 1rem; }}
   .sub-index {{
     position: absolute; top: -8px; left: -8px;
@@ -174,8 +358,36 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
     display: flex; align-items: center; justify-content: center;
   }}
 
-  .reasoning-section {{ margin-top: 2rem; }}
-  .reasoning-section h2 {{ font-size: 1.05rem; color: var(--text-dim); font-weight: 600; margin-bottom: 0.75rem; }}
+  .ticker-section, .pool-section, .glossary-section, .reasoning-section {{ margin-top: 2rem; }}
+  .ticker-caveat {{
+    color: var(--text-dim); font-size: 0.8rem; margin-bottom: 0.85rem; max-width: 720px;
+  }}
+  .ticker-row {{
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.4rem 0; border-bottom: 1px solid var(--panel-border);
+  }}
+  .ticker-team {{ width: 60px; flex-shrink: 0; font-weight: 600; font-size: 0.85rem; }}
+  .ticker-fixtures {{ display: flex; flex-wrap: wrap; gap: 0.35rem; }}
+  .fdr-box {{
+    color: #0b1220; font-size: 0.72rem; font-weight: 700;
+    padding: 0.2rem 0.5rem; border-radius: 6px; white-space: nowrap;
+  }}
+  .fdr-box.fdr-blank {{ background: #2a3752; color: var(--text-dim); }}
+
+  .table-scroll {{ overflow-x: auto; }}
+  .pool-table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; min-width: 560px; }}
+  .pool-table th {{
+    text-align: left; color: var(--text-dim); font-weight: 600; font-size: 0.72rem;
+    text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--panel-border);
+  }}
+  .pool-table td {{ padding: 0.4rem 0.6rem; border-bottom: 1px solid rgba(35,48,74,0.5); }}
+  .pool-table tr.picked {{ background: rgba(52, 211, 153, 0.08); }}
+  .picked-mark {{ color: var(--accent); font-size: 0.72rem; font-weight: 600; }}
+
+  .glossary dt {{ font-weight: 600; margin-top: 0.75rem; }}
+  .glossary dd {{ color: var(--text-dim); margin: 0.2rem 0 0; font-size: 0.85rem; max-width: 720px; }}
+
   .reasoning-block {{
     background: var(--panel);
     border: 1px solid var(--panel-border);
@@ -229,10 +441,16 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
     <div class="bench-row">{bench_cards}</div>
   </div>
 
+  {_fixture_ticker_html(fixture_ticker, result.squad)}
+
+  {_player_pool_tables_html(all_scores, squad_ids)}
+
   <div class="reasoning-section">
     <h2>Top picks — reasoning</h2>
     {''.join(reasoning_items)}
   </div>
+
+  {_glossary_html()}
 
   <footer>Generated by fpl-squad-optimizer at {escape(generated_at)} &middot; not affiliated with the Premier League or Fantasy Premier League</footer>
 </div>
@@ -241,7 +459,16 @@ def render_html(result: SquadResult, gameweek: int, generated_at: str | None = N
 """
 
 
-def write_html(result: SquadResult, gameweek: int, path: str, generated_at: str | None = None) -> None:
-    html = render_html(result, gameweek, generated_at=generated_at)
+def write_html(
+    result: SquadResult,
+    gameweek: int,
+    path: str,
+    generated_at: str | None = None,
+    all_scores: list[PlayerScore] | None = None,
+    fixture_ticker: dict[int, list[dict]] | None = None,
+) -> None:
+    html = render_html(
+        result, gameweek, generated_at=generated_at, all_scores=all_scores, fixture_ticker=fixture_ticker
+    )
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)

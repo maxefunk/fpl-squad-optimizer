@@ -45,7 +45,15 @@ python -m fpl_forecast --gameweek 5 --budget 95.5 --max-per-club 2
 
 # Bypass the local cache and refetch everything from the FPL API
 python -m fpl_forecast --gameweek 5 --refresh
+
+# Also write a standalone HTML pitch-view report
+python -m fpl_forecast --gameweek 5 --html squad.html
 ```
+
+`--html` writes a self-contained report (inline CSS, no external
+requests) with the starting XI laid out on a pitch by position, captain/
+vice-captain badges, a budget bar, the bench in sub order, and the
+reasoning behind the top picks — open the file directly in a browser.
 
 API responses are cached to `data/cache/` (gitignored) so repeat runs are
 fast and don't hammer the FPL API. `--refresh` forces a live refetch.

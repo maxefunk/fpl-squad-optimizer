@@ -10,6 +10,7 @@ import requests
 from fpl_forecast.api_client import FPLClient
 from fpl_forecast.constants import DEFAULT_BUDGET, MAX_PER_CLUB
 from fpl_forecast.formatting import format_squad_result
+from fpl_forecast.formatting_html import write_html
 from fpl_forecast.optimizer import InfeasibleError, optimize_squad
 from fpl_forecast.scoring import score_all_players
 
@@ -68,6 +69,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-per-club", type=int, default=MAX_PER_CLUB, help="Max players from one club (default: 3)")
     parser.add_argument("--cache-dir", type=str, default="data/cache", help="Directory for cached API responses")
     parser.add_argument("--refresh", action="store_true", help="Bypass cache and refetch all data from the FPL API")
+    parser.add_argument(
+        "--html",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Also write a standalone HTML pitch-view report to this path",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -86,6 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(format_squad_result(result, gw))
+
+    if args.html:
+        write_html(result, gw, args.html)
+        print(f"\nHTML report written to {args.html}")
+
     return 0
 
 

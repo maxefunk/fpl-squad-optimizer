@@ -58,6 +58,20 @@ reasoning behind the top picks — open the file directly in a browser.
 API responses are cached to `data/cache/` (gitignored) so repeat runs are
 fast and don't hammer the FPL API. `--refresh` forces a live refetch.
 
+### Hosted report (GitHub Pages)
+
+If you'd rather not run the CLI yourself, `.github/workflows/publish-report.yml`
+regenerates the HTML report daily (and on manual trigger) and publishes it
+to GitHub Pages, so you can just visit a URL. It always targets the next
+unplayed gameweek — no gameweek number needs to be updated as the season
+progresses. To turn it on (one-time, repo-admin only):
+
+1. **Settings → Pages → Build and deployment → Source: "GitHub Actions"**.
+2. Run the workflow once manually: **Actions → Publish squad report → Run workflow**
+   (optionally pass a specific `gameweek`; leave blank for the next unplayed one).
+3. The report will be live at `https://<owner>.github.io/fpl-squad-optimizer/`
+   and refresh automatically every day at 09:00 UTC after that.
+
 ### Backtesting
 
 `scripts/backtest.py` runs the model against a **completed** gameweek and

@@ -161,6 +161,16 @@ def _make_scoring_player(minutes, points_per_game="6.0", **overrides):
     return player
 
 
+def test_score_player_parses_selected_by_percent():
+    strength = build_team_strength_lookup([_team(1), _team(2)])
+    fixtures_for_team = [{"opponent_id": 2, "is_home": True, "difficulty": 3}]
+    player = _make_scoring_player(minutes=1800, selected_by_percent="42.7")
+
+    result = score_player(player, strength, fixtures_for_team, [], None, [])
+
+    assert result.selected_by_percent == pytest.approx(42.7)
+
+
 def test_score_player_shrinks_small_sample_points_per_game():
     # Two players report the identical (high) points-per-game, but one has
     # a near-full season of minutes behind it and the other has a single

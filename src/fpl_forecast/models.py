@@ -30,6 +30,7 @@ class PlayerScore:
     clean_sheet_prob: float | None = None  # None for FWD (no CS points)
     data_confidence: float = 1.0  # 0-1: how much minutes back the season/form numbers
     fixture_desc: str = ""  # e.g. "TOT (H, FDR 3)" or "ARS (H, FDR 2), CHE (A, FDR 4)"
+    selected_by_percent: float = 0.0  # ownership % across all FPL managers, from the API -- informational only
 
     @property
     def is_playing(self) -> bool:

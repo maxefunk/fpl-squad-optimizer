@@ -388,6 +388,7 @@ def score_player(
             num_fixtures=0,
             reasons=["Blank gameweek: no fixture."],
             data_confidence=0.0,
+            selected_by_percent=_to_float(player.get("selected_by_percent")),
         )
 
     # -- underlying per-90 attacking output (prefer expected stats) --------
@@ -551,6 +552,7 @@ def score_player(
         clean_sheet_prob=round(clean_sheet_prob, 3) if clean_sheet_prob is not None else None,
         data_confidence=round(confidence, 3),
         fixture_desc=fixture_desc_str,
+        selected_by_percent=_to_float(player.get("selected_by_percent")),
     )
 
 

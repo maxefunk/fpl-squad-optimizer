@@ -69,12 +69,17 @@ requests) with:
 - each squad club's next 5 gameweeks of fixtures, colour-coded by FDR, plus
   a full 20-team version of the same for spotting a transfer target's run;
 - a "who else was in the mix" table per position (top 8 by projected
-  points, with the squad's actual picks highlighted) so you can see the
-  alternatives, not just the final XI;
+  points, with the squad's actual picks highlighted, including each
+  player's ownership%) so you can see the alternatives, not just the
+  final XI;
+- a separate "most selected players" table (top 8 by ownership% per
+  position, from the FPL API's `selected_by_percent`) alongside our own
+  projection for the same players, so you can see where this tool agrees
+  or disagrees with the crowd -- entirely independent of its own picks;
 - the reasoning behind the top picks, plus a score-breakdown bar chart
   showing how each top pick's model/form/season components stack up;
 - a glossary explaining the terminology (projected points, FDR,
-  availability%, clean sheet %, fixture run, etc.).
+  availability%, clean sheet %, ownership%, fixture run, etc.).
 
 Open the file directly in a browser.
 
@@ -173,7 +178,7 @@ pytest
 
 | Endpoint | Used for |
 |---|---|
-| `bootstrap-static/` | Players, teams, prices, positions, season-to-date stats, current gameweek |
+| `bootstrap-static/` | Players, teams, prices, positions, season-to-date stats, ownership % (`selected_by_percent`), current gameweek |
 | `fixtures/` | Full-season fixture list + FDR (`team_h_difficulty` / `team_a_difficulty`) -- fetched once and filtered locally for the target gameweek's scoring, the fixture-run factor, and the HTML report's fixture ticker/full gameweek list |
 | `element-summary/{id}/` | Per-player gameweek-by-gameweek history (recency-weighted form) and past-season summaries |
 | `team/set-piece-notes/` | Penalty/free-kick/corner-taker notes, folded in as a small MID/FWD bonus |
@@ -297,7 +302,8 @@ A proper constrained MILP solver (**PuLP**, using the bundled CBC solver),
 not a greedy heuristic — see
 [`src/fpl_forecast/optimizer.py`](src/fpl_forecast/optimizer.py). One
 integer program selects the 15-man squad **and** the starting XI
-simultaneously, maximizing total starting-XI projected points subject to:
+simultaneously, maximizing total starting-XI projected points (plus a
+small secondary term, see below) subject to:
 
 - Exactly 15 players: 2 GK, 5 DEF, 5 MID, 3 FWD
 - Total squad cost ≤ budget (default £100.0m, configurable via `--budget`)
@@ -310,6 +316,25 @@ spec, they're simply the highest- and second-highest-projected-points
 players in the optimizer's chosen starting XI, assigned after the solve.
 Bench order is the 3 outfield bench players sorted by projected points
 (highest first = first sub), then the bench goalkeeper last.
+
+**Bench quality**: the objective is *only* starting-XI points, so on its
+own the optimizer has zero preference among bench slots (they don't count
+towards it at all) and will happily fill them with the cheapest possible
+fodder — technically optimal, but not always a squad you'd want to own,
+since if a starter blanks you'd rather have a credible backup than a
+guaranteed zero. A small secondary term (`BENCH_QUALITY_WEIGHT = 0.05`,
+outfield bench only — a backup goalkeeper genuinely should be as cheap as
+possible, since it rarely plays regardless of quality) rewards outfield
+bench points highly enough to prefer a same-priced credible option over
+pure fodder, but far too small to ever trade away starting-XI quality for
+it (see the regression test asserting the starting XI is byte-for-byte
+identical with the weight on vs. off).
+
+`optimize_transfers` (used by the `transfers` subcommand) is the same
+MILP with a `hits` variable and a linear `transfers_made` expression
+added — see [Team tracking & transfers](#team-tracking--transfers) above
+for how that embeds the -4-per-hit tradeoff directly into the objective
+instead of choosing a transfer count heuristically.
 
 `optimize_transfers` (used by the `transfers` subcommand) is the same
 MILP with a `hits` variable and a linear `transfers_made` expression

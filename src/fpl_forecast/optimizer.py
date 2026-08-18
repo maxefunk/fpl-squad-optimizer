@@ -1,10 +1,11 @@
 """Budget-constrained squad optimizer, built on a PuLP MILP.
 
 We solve for the 15-man squad AND the starting XI simultaneously in one
-integer program: the objective maximizes total starting-XI xPts subject to
-budget, squad-composition, per-club, and valid-XI-shape constraints. This
-guarantees a globally optimal combination for the given xPts scores and
-constraints (not a greedy approximation).
+integer program: the objective maximizes total starting-XI xPts (plus a
+small secondary term rewarding outfield bench quality -- see
+BENCH_QUALITY_WEIGHT) subject to budget, squad-composition, per-club, and
+valid-XI-shape constraints. This guarantees a globally optimal combination
+for the given xPts scores and constraints (not a greedy approximation).
 
 Captain/vice-captain are not decision variables in the MILP -- per the
 spec, they are simply the highest- and second-highest-xPts players in the
@@ -16,6 +17,7 @@ from __future__ import annotations
 import pulp
 
 from fpl_forecast.constants import (
+    BENCH_QUALITY_WEIGHT,
     DEFAULT_BUDGET,
     MAX_PER_CLUB,
     POSITION_ORDER,
@@ -36,6 +38,7 @@ def optimize_squad(
     players: list[PlayerScore],
     budget: float = DEFAULT_BUDGET,
     max_per_club: int = MAX_PER_CLUB,
+    bench_quality_weight: float = BENCH_QUALITY_WEIGHT,
 ) -> SquadResult:
     if not players:
         raise InfeasibleError("No players available to select from.")
@@ -47,8 +50,13 @@ def optimize_squad(
 
     by_id = {p.element_id: p for p in players}
 
-    # Objective: maximize total starting-XI xPts.
-    prob += pulp.lpSum(xi_vars[p.element_id] * p.xpts for p in players)
+    # Objective: maximize total starting-XI xPts, plus a small secondary
+    # term rewarding outfield bench quality (see BENCH_QUALITY_WEIGHT) so
+    # bench slots aren't filled with zero-chance-of-playing fodder purely
+    # because they're marginally cheaper than a credible backup.
+    prob += pulp.lpSum(xi_vars[p.element_id] * p.xpts for p in players) + bench_quality_weight * pulp.lpSum(
+        (squad_vars[p.element_id] - xi_vars[p.element_id]) * p.xpts for p in players if p.position != "GK"
+    )
 
     # A player can only start if they're in the squad.
     for p in players:
@@ -133,6 +141,7 @@ def optimize_transfers(
     max_per_club: int = MAX_PER_CLUB,
     hit_cost: float = TRANSFER_HIT_COST,
     max_transfers: int | None = None,
+    bench_quality_weight: float = BENCH_QUALITY_WEIGHT,
 ) -> TransferResult:
     """Find the transfer set (0 or more swaps) that maximizes net gain.
 
@@ -168,7 +177,14 @@ def optimize_transfers(
     kept_expr = pulp.lpSum(squad_vars[eid] for eid in current_squad_ids if eid in squad_vars)
     transfers_made_expr = 15 - kept_expr
 
-    prob += pulp.lpSum(xi_vars[p.element_id] * p.xpts for p in players) - hit_cost * hits_var
+    prob += (
+        pulp.lpSum(xi_vars[p.element_id] * p.xpts for p in players)
+        - hit_cost * hits_var
+        + bench_quality_weight
+        * pulp.lpSum(
+            (squad_vars[p.element_id] - xi_vars[p.element_id]) * p.xpts for p in players if p.position != "GK"
+        )
+    )
 
     for p in players:
         prob += xi_vars[p.element_id] <= squad_vars[p.element_id]

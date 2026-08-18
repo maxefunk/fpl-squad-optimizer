@@ -17,6 +17,16 @@ XI_SIZE = 11
 DEFAULT_BUDGET = 100.0
 MAX_PER_CLUB = 3
 
+# Secondary objective weight rewarding outfield bench quality (GK excluded --
+# a backup keeper almost never plays, so cheapest-possible is correct real
+# strategy there). Without this, the optimizer has zero preference among
+# bench slots since they don't count toward the objective at all, and tends
+# to fill them with the cheapest fodder regardless of playing chance. Kept
+# small so it only breaks ties/nudges among otherwise-equal choices -- it
+# must never be large enough to trade away starting-XI quality for a
+# better bench (see the regression test asserting XI xpts is unaffected).
+BENCH_QUALITY_WEIGHT = 0.05
+
 # FPL points values
 GOAL_POINTS = {"GK": 6, "DEF": 6, "MID": 5, "FWD": 4}
 ASSIST_POINTS = 3

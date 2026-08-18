@@ -136,6 +136,25 @@ def test_render_html_includes_score_breakdown_chart():
     assert "chart-bar-row" in html
 
 
+def test_render_html_includes_most_selected_section_when_ownership_present(sample_pool):
+    result = optimize_squad(sample_pool, budget=100.0, max_per_club=3)
+    for i, p in enumerate(sample_pool):
+        p.selected_by_percent = float(i % 40)  # give everyone some nonzero ownership
+
+    html = render_html(result, gameweek=1, all_scores=sample_pool)
+
+    assert "Most selected players" in html
+    assert "Our Proj. Pts" in html  # header unique to the most-selected table
+
+
+def test_render_html_omits_most_selected_section_without_ownership_data(sample_pool):
+    result = optimize_squad(sample_pool, budget=100.0, max_per_club=3)
+    # sample_pool players all default to selected_by_percent=0.0 (no data).
+    html = render_html(result, gameweek=1, all_scores=sample_pool)
+
+    assert "Most selected players" not in html
+
+
 def _make_minimal_result():
     pool = [
         make_player(1, "GK", 1, 4.5, 5.0),

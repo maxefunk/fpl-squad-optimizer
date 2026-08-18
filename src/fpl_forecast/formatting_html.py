@@ -253,6 +253,7 @@ def _player_pool_tables_html(all_scores: list[PlayerScore] | None, squad_ids: se
                   <td>{p.xpts:.2f}</td>
                   <td>{p.availability_prob:.0%}</td>
                   <td>{cs}</td>
+                  <td>{p.selected_by_percent:.1f}%</td>
                   <td>{escape(p.fixture_desc) or '&ndash;'}</td>
                   <td>{tags or '&ndash;'}</td>
                 </tr>
@@ -267,7 +268,7 @@ def _player_pool_tables_html(all_scores: list[PlayerScore] | None, squad_ids: se
                 <thead>
                   <tr>
                     <th>Player</th><th>Team</th><th>Price</th><th>Proj. Pts</th>
-                    <th>Avail.</th><th>CS%</th><th>Fixture(s)</th><th>Flags</th>
+                    <th>Avail.</th><th>CS%</th><th>Own%</th><th>Fixture(s)</th><th>Flags</th>
                   </tr>
                 </thead>
                 <tbody>{''.join(rows)}</tbody>
@@ -280,6 +281,64 @@ def _player_pool_tables_html(all_scores: list[PlayerScore] | None, squad_ids: se
     return f"""
     <div class="pool-section">
       <h2>Who else was in the mix (top {top_n} per position by projected points)</h2>
+      {''.join(sections)}
+    </div>
+    """
+
+
+def _most_selected_html(all_scores: list[PlayerScore] | None, squad_ids: set[int], top_n: int = 8) -> str:
+    if not all_scores:
+        return ""
+
+    sections = []
+    for pos in POSITION_ORDER:
+        pool = sorted(
+            (p for p in all_scores if p.position == pos), key=lambda p: p.selected_by_percent, reverse=True
+        )[:top_n]
+        if not pool or pool[0].selected_by_percent <= 0:
+            continue
+        rows = []
+        for p in pool:
+            picked = p.element_id in squad_ids
+            row_class = "picked" if picked else ""
+            rows.append(
+                f"""
+                <tr class="{row_class}">
+                  <td>{escape(p.web_name)}{' <span class="picked-mark">&#10003; squad</span>' if picked else ''}</td>
+                  <td>{escape(p.team_short)}</td>
+                  <td>£{p.now_cost:.1f}m</td>
+                  <td>{p.selected_by_percent:.1f}%</td>
+                  <td>{p.xpts:.2f}</td>
+                </tr>
+                """
+            )
+        sections.append(
+            f"""
+            <div class="pool-table-wrap">
+              <h3>{_POSITION_LABELS[pos]}</h3>
+              <div class="table-scroll">
+              <table class="pool-table">
+                <thead>
+                  <tr><th>Player</th><th>Team</th><th>Price</th><th>Own%</th><th>Our Proj. Pts</th></tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+              </table>
+              </div>
+            </div>
+            """
+        )
+
+    if not sections:
+        return ""
+
+    return f"""
+    <div class="pool-section">
+      <h2>Most selected players (highest ownership %, top {top_n} per position)</h2>
+      <div class="ticker-caveat">
+        What the rest of the FPL player base actually owns, independent of this tool's own
+        picks -- a high-ownership player with a low "Our Proj. Pts" here is one this model
+        disagrees with the crowd on, in either direction.
+      </div>
       {''.join(sections)}
     </div>
     """
@@ -304,6 +363,9 @@ _GLOSSARY = [
      "data yet) -- so a fully-fit bench player still reads as unlikely to feature."),
     ("Clean Sheet % (CS%)", "Estimated probability the player's team doesn't concede in this fixture, "
      "from a simplified Poisson model built on the FPL API's team strength ratings."),
+    ("Own% (Ownership)", "What percentage of all FPL managers currently own this player, straight from "
+     "the FPL API (\"selected_by_percent\") -- has no bearing on this tool's own projection, shown "
+     "purely for context/comparison against the crowd."),
     ("Limited data / rotation risk flags", "\"Limited data\" means the season/form/attacking numbers are "
      "backed by only a handful of minutes played, so a hot small-sample points-per-game or per-90 goal "
      "rate is discounted toward a neutral baseline rather than trusted outright -- this is what stops a "
@@ -602,6 +664,8 @@ def render_html(
   {_full_league_ticker_html(fixture_ticker, teams_lookup)}
 
   {_player_pool_tables_html(all_scores, squad_ids)}
+
+  {_most_selected_html(all_scores, squad_ids)}
 
   <div class="reasoning-section">
     <h2>Top picks — reasoning</h2>

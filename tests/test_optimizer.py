@@ -275,3 +275,61 @@ def test_optimize_transfers_default_hit_cost_matches_constant():
 
     tr = optimize_transfers(owned, current_ids, free_transfers=1, budget=budget)
     assert tr.hit_cost == TRANSFER_HIT_COST
+
+
+def _bench_quality_pool():
+    """4 clearly XI-worthy DEF (always start, need only 3-5 of 5 to), plus a
+    contested 5th-DEF slot: two same-price candidates, one pure fodder and
+    one a credible-but-not-XI-worthy backup. Neither can ever start (both
+    are weaker than every fixed starter), so whichever wins the slot only
+    affects the bench, never the starting XI -- isolating the bench-quality
+    term's effect from squad/XI selection."""
+    return [
+        make_player(1, "GK", 1, 4.5, 6.0),
+        make_player(2, "GK", 2, 4.0, 1.0),
+        make_player(3, "DEF", 1, 5.0, 6.0),
+        make_player(4, "DEF", 2, 5.0, 5.5),
+        make_player(5, "DEF", 3, 5.0, 5.0),
+        make_player(6, "DEF", 4, 5.0, 4.5),
+        make_player(7, "DEF", 5, 4.0, 0.1, web_name="Fodder"),
+        make_player(107, "DEF", 5, 4.0, 3.0, web_name="Credible"),
+        make_player(8, "MID", 3, 4.5, 6.0),
+        make_player(9, "MID", 4, 4.5, 5.5),
+        make_player(10, "MID", 5, 4.5, 5.0),
+        make_player(11, "MID", 1, 4.5, 4.5),
+        make_player(12, "MID", 2, 4.5, 4.0),
+        make_player(13, "FWD", 3, 5.0, 6.0),
+        make_player(14, "FWD", 4, 5.0, 5.5),
+        make_player(15, "FWD", 5, 5.0, 5.0),
+    ]
+
+
+def test_bench_quality_weight_prefers_credible_backup_without_hurting_xi():
+    pool = _bench_quality_pool()
+    budget = 70.0
+
+    with_weight = optimize_squad(pool, budget=budget, max_per_club=3)
+    no_weight = optimize_squad(pool, budget=budget, max_per_club=3, bench_quality_weight=0.0)
+
+    assert any(p.web_name == "Credible" for p in with_weight.squad)
+    assert not any(p.web_name == "Fodder" for p in with_weight.squad)
+
+    # The bench-quality preference must never come at the cost of
+    # starting-XI quality: same starters, same total either way.
+    assert with_weight.total_xi_xpts == pytest.approx(no_weight.total_xi_xpts, abs=1e-6)
+    assert {p.element_id for p in with_weight.starting_xi} == {p.element_id for p in no_weight.starting_xi}
+
+
+def test_optimize_transfers_also_prefers_credible_bench():
+    pool = _bench_quality_pool()
+    # Currently-owned squad has "Fodder" in the bench slot; "Credible" is an
+    # available same-price alternative not yet owned.
+    current_ids = {p.element_id for p in pool if p.web_name != "Credible"}
+    budget = 70.0
+
+    tr = optimize_transfers(pool, current_ids, free_transfers=1, budget=budget)
+
+    assert tr.transfers_made == 1
+    assert tr.transfers_in[0].web_name == "Credible"
+    assert tr.transfers_out[0].web_name == "Fodder"
+    assert tr.hits == 0  # a free transfer, no reason to skip a strictly-better bench option

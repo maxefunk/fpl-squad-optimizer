@@ -30,6 +30,10 @@ from fpl_forecast.constants import (
     AVAILABILITY_PAST_SEASON_NAILED,
     AVAILABILITY_PAST_SEASON_ROTATION,
     CLEAN_SHEET_POINTS,
+    FIXTURE_RUN_LOOKAHEAD_GWS,
+    FIXTURE_RUN_MULTIPLIER_MAX,
+    FIXTURE_RUN_MULTIPLIER_MIN,
+    FIXTURE_RUN_WEIGHT,
     FORM_LOOKBACK_GWS,
     FORM_RECENCY_WEIGHTS,
     GOAL_POINTS,
@@ -37,6 +41,7 @@ from fpl_forecast.constants import (
     MIN_MINUTES_FOR_FULL_CONFIDENCE,
     MIN_SEASON_MINUTES_FOR_SIGNAL,
     NEUTRAL_PPG_PRIOR,
+    PAST_SEASON_CONFIDENCE_DISCOUNT,
     PAST_SEASON_GAMES_FRINGE,
     PAST_SEASON_GAMES_NAILED,
     PAST_SEASON_GAMES_ROTATION,
@@ -159,6 +164,25 @@ def team_fixtures_for_gw(team_id: int, fixtures: list[dict]) -> list[dict]:
     return out
 
 
+def fixture_run_multiplier(team_id: int, gameweek: int, fixture_ticker: dict[int, list[dict]] | None) -> float:
+    """Nudge for the run of fixtures *after* the target gameweek.
+
+    A player who looks great this week but has a brutal run right after is
+    a worse pick than the single-GW xPts implies, since dropping them again
+    soon costs a transfer or a hit. Returns 1.0 (no effect) when there's no
+    ticker data or no fixtures in the lookahead window (nothing to judge).
+    """
+    if not fixture_ticker:
+        return 1.0
+    upcoming = [f for f in fixture_ticker.get(team_id, []) if f["event"] > gameweek]
+    upcoming = upcoming[:FIXTURE_RUN_LOOKAHEAD_GWS]
+    if not upcoming:
+        return 1.0
+    avg_fdr = sum(f["difficulty"] for f in upcoming) / len(upcoming)
+    multiplier = 1.0 + (3.0 - avg_fdr) * FIXTURE_RUN_WEIGHT
+    return max(FIXTURE_RUN_MULTIPLIER_MIN, min(FIXTURE_RUN_MULTIPLIER_MAX, multiplier))
+
+
 # ---------------------------------------------------------------------------
 # Form / availability
 # ---------------------------------------------------------------------------
@@ -177,25 +201,17 @@ def compute_form_component(history: list[dict]) -> float | None:
     return weighted / total_weight
 
 
-def compute_availability_prob(
-    player: dict, history: list[dict], history_past: list[dict] | None = None
-) -> float:
-    """Estimate probability the player plays a meaningful role this GW.
+def _squad_role_factor(player: dict, history: list[dict], history_past: list[dict] | None) -> float:
+    """How likely this player is to be in the matchday XI on current form,
+    ignoring injury/fitness doubts entirely (see compute_availability_prob).
 
-    `chance_of_playing_next_round` only captures injury/fitness doubts, not
-    "is this player actually first-choice" -- a fully fit backup keeper
-    still reports 100. Squad-role competition is instead inferred from
-    actual minutes: current-season per-GW history when it exists, falling
-    back to the most recently completed season's minutes (history_past)
-    when it doesn't -- most notably at gameweek 1, before any current-season
-    data exists at all. This is what keeps a fringe player who happened to
-    have one big cameo (inflating their points-per-game) from being read as
-    a nailed-on starter.
+    Inferred from actual minutes: current-season per-GW history when it
+    exists, falling back to the most recently completed season's minutes
+    (history_past) when it doesn't -- most notably at gameweek 1, before
+    any current-season data exists at all. This is what keeps a fringe
+    player who happened to have one big cameo (inflating their
+    points-per-game) from being read as a nailed-on starter.
     """
-    chance_next = player.get("chance_of_playing_next_round")
-    if chance_next is not None:
-        return max(0.0, min(1.0, _to_float(chance_next) / 100.0))
-
     if history:
         recent = sorted(history, key=lambda h: h["round"], reverse=True)[:FORM_LOOKBACK_GWS]
         starts = sum(1 for h in recent if h["minutes"] >= START_MINUTES_THRESHOLD)
@@ -218,6 +234,35 @@ def compute_availability_prob(
     if season_minutes > 0:
         return 0.4
     return AVAILABILITY_NO_DATA  # no minutes on record anywhere: unproven
+
+
+def compute_availability_prob(
+    player: dict, history: list[dict], history_past: list[dict] | None = None
+) -> float:
+    """Estimate probability the player plays a meaningful role this GW.
+
+    Combines two independent signals multiplicatively:
+
+    - fitness factor: `chance_of_playing_next_round` when the API has set
+      it. This only captures injury/fitness doubts -- FPL reports 100 here
+      for every fully-fit player regardless of first-team status, so a
+      fully-fit backup goalkeeper also reports 100. It must NOT be treated
+      as confirmation that a player starts; it's a discount applied on top
+      of the squad-role signal, not a replacement for it. Missing (None)
+      is treated as "no doubt flagged" (1.0), not "no minutes signal".
+    - squad-role factor: is this player actually in the matchday XI most
+      weeks, from actual minutes played (see _squad_role_factor).
+
+    Multiplying the two means a fringe player who happens to be fully fit
+    still reads as unlikely to feature, and an injury-doubtful starter
+    still reads as much more likely to play than a fit bench option.
+    """
+    chance_next = player.get("chance_of_playing_next_round")
+    fitness_factor = max(0.0, min(1.0, _to_float(chance_next) / 100.0)) if chance_next is not None else 1.0
+
+    squad_role_factor = _squad_role_factor(player, history, history_past)
+
+    return max(0.0, min(1.0, fitness_factor * squad_role_factor))
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +363,8 @@ def score_player(
     history: list[dict],
     set_piece_info: dict | None,
     history_past: list[dict] | None = None,
+    gameweek: int | None = None,
+    fixture_ticker: dict[int, list[dict]] | None = None,
 ) -> PlayerScore:
     position = POSITIONS[player["element_type"]]
     team_id = player["team"]
@@ -346,19 +393,55 @@ def score_player(
     # -- underlying per-90 attacking output (prefer expected stats) --------
     xg90 = _to_float(player.get("expected_goals_per_90"))
     xa90 = _to_float(player.get("expected_assists_per_90"))
+    saves90 = _per90(_to_float(player.get("saves")), minutes)
+    confidence_minutes = minutes
+    used_past_season_rate = False
+    past_season_ppg = None
+
     if xg90 == 0.0 and xa90 == 0.0 and minutes > 0:
         # Fall back to actual goals/assists if underlying xG data is absent.
         xg90 = _per90(_to_float(player.get("goals_scored")), minutes)
         xa90 = _per90(_to_float(player.get("assists")), minutes)
 
-    saves90 = _per90(_to_float(player.get("saves")), minutes)
+    if minutes == 0 and history_past:
+        # No current-season minutes yet (typically gameweek 1): fall back to
+        # last season's actual per-90 rate rather than assuming 0. Without
+        # this, every player looks equally unproven at the start of a
+        # season regardless of whether they're Haaland or a fringe squad
+        # player -- last season's real output is a far better prior than
+        # silence, discounted for being a season old (see
+        # PAST_SEASON_CONFIDENCE_DISCOUNT).
+        last_season = history_past[-1]
+        last_season_minutes = _to_float(last_season.get("minutes"))
+        if last_season_minutes > 0:
+            xg90 = _per90(_to_float(last_season.get("goals_scored")), last_season_minutes)
+            xa90 = _per90(_to_float(last_season.get("assists")), last_season_minutes)
+            saves90 = _per90(_to_float(last_season.get("saves")), last_season_minutes)
+            confidence_minutes = last_season_minutes
+            used_past_season_rate = True
+            games_equivalent = max(1.0, last_season_minutes / 90.0)
+            past_season_ppg = _to_float(last_season.get("total_points")) / games_equivalent
 
     attacking_threat_per90 = xg90 * GOAL_POINTS[position] + xa90 * ASSIST_POINTS
 
-    # -- season & form components, shrunk toward a neutral prior when only a
-    # small sample of minutes backs them (see _confidence_from_minutes) -----
-    confidence = _confidence_from_minutes(minutes)
-    season_component_raw = _to_float(player.get("points_per_game"))
+    # -- confidence: how much to trust points_per_game/form/attacking-rate,
+    # shrinking small samples toward a neutral prior instead of taking them
+    # at face value (a single hot cameo shouldn't look like a full season) -
+    confidence = _confidence_from_minutes(confidence_minutes)
+    if used_past_season_rate:
+        confidence *= PAST_SEASON_CONFIDENCE_DISCOUNT
+
+    # When there's no current-season data, points_per_game/form must also
+    # come from history_past rather than the (stale or reset) live bootstrap
+    # fields -- otherwise `confidence` (derived from last season's minutes)
+    # would be applied to a number from a different, inconsistent source.
+    if used_past_season_rate:
+        season_component_raw = past_season_ppg
+        form_component_raw_default = past_season_ppg
+    else:
+        season_component_raw = _to_float(player.get("points_per_game"))
+        form_component_raw_default = season_component_raw
+
     season_component = confidence * season_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
 
     form_component = compute_form_component(history)
@@ -366,8 +449,17 @@ def score_player(
         # No per-GW history to compute recency-weighted form from -- the
         # API's own 'form' field is itself just as small-sample-prone here,
         # so it gets the same shrinkage treatment.
-        form_component_raw = _to_float(player.get("form"), default=season_component_raw)
+        if used_past_season_rate:
+            form_component_raw = form_component_raw_default
+        else:
+            form_component_raw = _to_float(player.get("form"), default=form_component_raw_default)
         form_component = confidence * form_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
+
+    # Attacking threat has no sensible "neutral" prior to shrink toward other
+    # than 0 -- an unproven rate shouldn't be assumed to keep producing at
+    # the same per-90 clip, so it's shrunk multiplicatively instead of blended.
+    attacking_threat_per90 *= confidence
+    saves90 *= confidence
 
     availability_prob = compute_availability_prob(player, history, history_past)
 
@@ -400,10 +492,22 @@ def score_player(
     fixture_desc_str = ", ".join(fixture_desc)
     reasons.append(f"Fixture(s): {fixture_desc_str}")
 
+    run_mult = 1.0
+    if gameweek is not None:
+        run_mult = fixture_run_multiplier(team_id, gameweek, fixture_ticker)
+        if run_mult != 1.0:
+            model_total *= run_mult
+            direction = "favorable" if run_mult > 1.0 else "tough"
+            reasons.append(
+                f"Fixture run after this GW is {direction} "
+                f"({(run_mult - 1.0) * 100:+.0f}% to model score)"
+            )
+
     if confidence < 0.5:
+        source = "last season's" if used_past_season_rate else "this season's"
         reasons.append(
-            f"Limited data: only ~{minutes / 90:.0f} matches worth of minutes on record "
-            "-- season/form numbers are shrunk toward a neutral baseline"
+            f"Limited data: only ~{confidence_minutes / 90:.0f} matches worth of {source} minutes on "
+            "record -- season/form/attacking numbers are shrunk toward a neutral baseline"
         )
 
     # -- set-piece duty bonus ------------------------------------------------
@@ -456,6 +560,8 @@ def score_all_players(
     fixtures: list[dict],
     element_summaries: dict[int, dict],
     set_piece_notes: dict | None = None,
+    gameweek: int | None = None,
+    fixture_ticker: dict[int, list[dict]] | None = None,
 ) -> list[PlayerScore]:
     team_strength = build_team_strength_lookup(teams)
 
@@ -479,7 +585,16 @@ def score_all_players(
         history_past = summary.get("history_past", [])
         set_piece_info = set_piece_lookup.get(player["id"])
         scores.append(
-            score_player(player, team_strength, fixtures_for_team, history, set_piece_info, history_past)
+            score_player(
+                player,
+                team_strength,
+                fixtures_for_team,
+                history,
+                set_piece_info,
+                history_past,
+                gameweek=gameweek,
+                fixture_ticker=fixture_ticker,
+            )
         )
 
     return scores

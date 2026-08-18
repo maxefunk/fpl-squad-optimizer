@@ -49,3 +49,21 @@ class SquadResult:
     total_cost: float
     total_xi_xpts: float
     budget: float
+
+
+@dataclass
+class TransferResult:
+    """Output of the transfer optimizer: a new squad plus what changed to get there."""
+
+    result: SquadResult
+    transfers_out: list[PlayerScore]
+    transfers_in: list[PlayerScore]
+    transfers_made: int
+    free_transfers: int
+    hits: int
+    hit_cost: float
+    bank_remaining: float
+
+    @property
+    def hit_points(self) -> float:
+        return self.hits * self.hit_cost

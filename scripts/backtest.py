@@ -164,7 +164,7 @@ def run_backtest(gameweek: int, budget: float, max_per_club: int, cache_dir: str
     captained_total = raw_xi_total + captain_bonus
 
     print(f"\n=== Backtest: Gameweek {gameweek} ===\n")
-    print("Recommended starting XI (predicted xPts -> actual points):")
+    print("Recommended starting XI (projected points -> actual points):")
     for p in result.starting_xi:
         actual = actual_points.get(p.element_id, "N/A")
         tag = " (C)" if p.element_id == result.captain.element_id else (

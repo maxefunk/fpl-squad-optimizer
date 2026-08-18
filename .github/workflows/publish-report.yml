@@ -42,7 +42,7 @@ jobs:
           if [ -n "${{ inputs.gameweek }}" ]; then
             GW_FLAG="--gameweek ${{ inputs.gameweek }}"
           fi
-          python -m fpl_forecast $GW_FLAG --html public/index.html
+          python -m fpl_forecast recommend $GW_FLAG --html public/index.html
 
       - uses: actions/upload-pages-artifact@v3
         with:

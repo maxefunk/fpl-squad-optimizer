@@ -59,6 +59,12 @@ START_MINUTES_THRESHOLD = 60
 MIN_MINUTES_FOR_FULL_CONFIDENCE = 900  # ~10 full matches
 NEUTRAL_PPG_PRIOR = 2.0  # a roughly average points-per-game across all outfield players
 
+# When current-season minutes are 0 (typically gameweek 1), confidence in
+# season/form/attacking-rate numbers instead comes from last season's
+# minutes (history_past), discounted further since a full season has
+# passed -- transfers, injuries, and aging can all have changed things.
+PAST_SEASON_CONFIDENCE_DISCOUNT = 0.85
+
 # -- Past-season availability fallback --------------------------------------
 # When a player has no current-season per-GW history yet (most notably
 # gameweek 1 of a new season), fall back to how much they played in the
@@ -76,3 +82,23 @@ AVAILABILITY_NO_DATA = 0.15  # no current- or past-season signal at all (new to 
 
 # Fixture-ticker window shown in the HTML report.
 FIXTURE_TICKER_GWS = 5
+
+# -- Near-term fixture-run factor --------------------------------------------
+# A player who looks great for the target gameweek but faces a brutal run
+# immediately afterward is a worse pick than the raw single-GW xPts implies,
+# since swapping them out again costs a transfer (or a hit). This nudges the
+# model component up/down based on the average FDR of the
+# FIXTURE_RUN_LOOKAHEAD_GWS gameweeks *after* the target one (the target GW
+# itself is already scored via the normal fixture-adjusted model).
+FIXTURE_RUN_LOOKAHEAD_GWS = 3
+FIXTURE_RUN_WEIGHT = 0.03  # multiplier change per FDR point away from neutral (3)
+FIXTURE_RUN_MULTIPLIER_MIN = 0.85
+FIXTURE_RUN_MULTIPLIER_MAX = 1.15
+
+# -- Transfers (week 2+) -----------------------------------------------------
+DEFAULT_FREE_TRANSFERS = 1
+TRANSFER_HIT_COST = 4.0  # points deducted per transfer beyond the free ones
+# How many free transfers can bank up if unused (classic FPL rule). Some
+# recent seasons allow banking more (up to 5) -- kept simple/configurable
+# here rather than tracking season-specific rule changes.
+FREE_TRANSFER_CAP = 2

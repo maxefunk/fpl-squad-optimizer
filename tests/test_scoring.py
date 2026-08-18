@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from fpl_forecast.constants import AVAILABILITY_NO_DATA, NEUTRAL_PPG_PRIOR
+import pytest
+
+from fpl_forecast.constants import AVAILABILITY_NO_DATA, AVAILABILITY_PAST_SEASON_FRINGE, NEUTRAL_PPG_PRIOR
 from fpl_forecast.scoring import (
     build_fixture_ticker,
     build_team_strength_lookup,
     compute_availability_prob,
     compute_form_component,
     fixture_impact,
+    fixture_run_multiplier,
     score_player,
     team_fixtures_for_gw,
 )
@@ -44,9 +47,25 @@ def test_form_component_none_when_no_history():
     assert compute_form_component([]) is None
 
 
-def test_availability_prefers_explicit_chance_of_playing():
+def test_availability_combines_fitness_and_squad_role_multiplicatively():
+    # 900 current-season minutes with no per-GW history given -> squad-role
+    # factor falls to the season_minutes>=90 tier (0.75). A 50% fitness
+    # doubt should discount that, not replace it outright.
     player = {"chance_of_playing_next_round": 50, "minutes": 900}
-    assert compute_availability_prob(player, []) == 0.5
+    assert compute_availability_prob(player, []) == pytest.approx(0.5 * 0.75)
+
+
+def test_availability_fully_fit_backup_is_not_read_as_nailed():
+    # The Jacquet case: FPL reports chance_of_playing_next_round=100 for
+    # every fully-fit player, including fringe squad players who rarely
+    # play. That fitness flag must not override a weak squad-role signal.
+    player = {"chance_of_playing_next_round": 100, "minutes": 0}
+    fringe_last_season = [{"season_name": "2025/26", "minutes": 300}]  # ~3.3 games
+
+    prob = compute_availability_prob(player, [], fringe_last_season)
+
+    assert prob < 0.5
+    assert prob == AVAILABILITY_PAST_SEASON_FRINGE  # fitness factor of 1.0 doesn't change it
 
 
 def test_availability_falls_back_to_recent_starts():
@@ -165,6 +184,69 @@ def test_score_player_shrinks_small_sample_points_per_game():
     assert abs(cameo_score.season_component - NEUTRAL_PPG_PRIOR) < abs(cameo_score.season_component - 6.0)
 
 
+def test_hot_cameo_does_not_outscore_established_player_on_attacking_threat():
+    # The Carvalho case: a player with one big cameo (huge per-90 xG/xA rate
+    # from a tiny sample) must not out-project a proven, consistent player
+    # at a similar price -- otherwise the "hot cameo" ends up as captain.
+    strength = build_team_strength_lookup([_team(1), _team(2)])
+    fixtures_for_team = [{"opponent_id": 2, "is_home": True, "difficulty": 3}]
+
+    hot_cameo = _make_scoring_player(
+        minutes=90,
+        points_per_game="2.0",
+        form="2.0",
+        expected_goals_per_90="1.2",  # huge rate, but from a single 90
+        expected_assists_per_90="0.5",
+    )
+    established = _make_scoring_player(
+        minutes=1800,
+        points_per_game="5.5",
+        form="5.5",
+        expected_goals_per_90="0.35",  # solid, realistic sustained rate
+        expected_assists_per_90="0.2",
+    )
+
+    cameo_score = score_player(hot_cameo, strength, fixtures_for_team, [], None, [])
+    established_score = score_player(established, strength, fixtures_for_team, [], None, [])
+
+    assert cameo_score.data_confidence < 0.2
+    assert established_score.xpts > cameo_score.xpts
+
+
+def test_attacking_threat_falls_back_to_last_season_when_no_current_minutes():
+    # The Haaland case: at gameweek 1, current-season minutes/xG are 0 for
+    # literally everyone, so a proven proper season's output (history_past)
+    # should give a real, non-zero attacking-threat baseline rather than
+    # everyone looking equally blank.
+    strength = build_team_strength_lookup([_team(1), _team(2)])
+    fixtures_for_team = [{"opponent_id": 2, "is_home": True, "difficulty": 3}]
+
+    proven_last_season = [
+        {"season_name": "2025/26", "minutes": 3000, "goals_scored": 30, "assists": 8, "saves": 0}
+    ]
+    unproven_no_history = []
+
+    proven_score = score_player(
+        _make_scoring_player(minutes=0, points_per_game="0.0", form="0.0"),
+        strength,
+        fixtures_for_team,
+        [],
+        None,
+        proven_last_season,
+    )
+    unproven_score = score_player(
+        _make_scoring_player(minutes=0, points_per_game="0.0", form="0.0"),
+        strength,
+        fixtures_for_team,
+        [],
+        None,
+        unproven_no_history,
+    )
+
+    assert proven_score.model_component > unproven_score.model_component
+    assert proven_score.xpts > unproven_score.xpts
+
+
 def test_build_fixture_ticker_window_blanks_and_doubles():
     teams = [_team(1), _team(2), _team(3)]
     all_fixtures = [
@@ -185,3 +267,47 @@ def test_build_fixture_ticker_window_blanks_and_doubles():
 
     # The GW6 fixture is outside the 5-GW window starting at GW1.
     assert all(f["event"] <= 5 for f in ticker[2])
+
+
+def test_fixture_run_multiplier_rewards_easy_run_and_punishes_hard_run():
+    easy_ticker = {1: [{"event": e, "difficulty": 1} for e in (2, 3, 4)]}
+    hard_ticker = {1: [{"event": e, "difficulty": 5} for e in (2, 3, 4)]}
+
+    easy = fixture_run_multiplier(1, gameweek=1, fixture_ticker=easy_ticker)
+    hard = fixture_run_multiplier(1, gameweek=1, fixture_ticker=hard_ticker)
+
+    assert easy > 1.0
+    assert hard < 1.0
+
+
+def test_fixture_run_multiplier_ignores_target_gw_and_excess_lookahead():
+    # GW1 (the target) has an easy fixture but must not count; only events
+    # after it (GW2 onward) should factor in.
+    ticker = {1: [{"event": 1, "difficulty": 1}, {"event": 2, "difficulty": 5}, {"event": 3, "difficulty": 5}]}
+    mult = fixture_run_multiplier(1, gameweek=1, fixture_ticker=ticker)
+    assert mult < 1.0  # only the hard GW2/GW3 fixtures should count
+
+
+def test_fixture_run_multiplier_neutral_without_ticker_data():
+    assert fixture_run_multiplier(1, gameweek=1, fixture_ticker=None) == 1.0
+    assert fixture_run_multiplier(1, gameweek=1, fixture_ticker={}) == 1.0
+    assert fixture_run_multiplier(1, gameweek=1, fixture_ticker={1: []}) == 1.0
+
+
+def test_score_player_applies_fixture_run_multiplier():
+    strength = build_team_strength_lookup([_team(1), _team(2)])
+    fixtures_for_team = [{"opponent_id": 2, "is_home": True, "difficulty": 3}]
+    player = _make_scoring_player(minutes=1800)
+
+    easy_run_ticker = {1: [{"event": e, "difficulty": 1} for e in (6, 7, 8)]}
+    hard_run_ticker = {1: [{"event": e, "difficulty": 5} for e in (6, 7, 8)]}
+
+    easy_score = score_player(
+        player, strength, fixtures_for_team, [], None, [], gameweek=5, fixture_ticker=easy_run_ticker
+    )
+    hard_score = score_player(
+        player, strength, fixtures_for_team, [], None, [], gameweek=5, fixture_ticker=hard_run_ticker
+    )
+    baseline_score = score_player(player, strength, fixtures_for_team, [], None, [])
+
+    assert easy_score.model_component > baseline_score.model_component > hard_score.model_component

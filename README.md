@@ -7,17 +7,21 @@ real FPL budget and squad-composition rules — using live data from the
 official FPL API.
 
 ```
-$ python -m fpl_forecast --gameweek 5
+$ python -m fpl_forecast recommend --gameweek 5
 
 === FPL Squad Recommendation — Gameweek 5 ===
 
 Formation: 3-4-3  |  Budget used: £99.5m / £100.0m
-Projected starting-XI xPts: 61.42
+Projected starting-XI points: 61.42
 
-Captain:      M.Salah (9.87 xPts)
-Vice-Captain: Haaland (9.41 xPts)
+Captain:      M.Salah (9.87 proj. pts)
+Vice-Captain: Haaland (9.41 proj. pts)
 ...
 ```
+
+Beyond the one-off recommendation, it can also track a squad you actually
+own week to week — accumulated points and transfer suggestions — see
+[Team tracking & transfers](#team-tracking--transfers).
 
 ## Setup
 
@@ -33,21 +37,26 @@ pip install -e . -r requirements.txt
 
 ## Usage
 
+The CLI is split into subcommands. `recommend` is the one-off "build me a
+squad from scratch" mode from the original spec; the rest (`save-team`,
+`record`, `transfers`, `status`) track a squad you actually own across
+gameweeks — see [Team tracking & transfers](#team-tracking--transfers).
+
 ```bash
 # Recommend a squad for a specific gameweek
-python -m fpl_forecast --gameweek 5
+python -m fpl_forecast recommend --gameweek 5
 
 # Default: targets the next unplayed gameweek
-python -m fpl_forecast
+python -m fpl_forecast recommend
 
 # Configurable budget / per-club limit
-python -m fpl_forecast --gameweek 5 --budget 95.5 --max-per-club 2
+python -m fpl_forecast recommend --gameweek 5 --budget 95.5 --max-per-club 2
 
 # Bypass the local cache and refetch everything from the FPL API
-python -m fpl_forecast --gameweek 5 --refresh
+python -m fpl_forecast recommend --gameweek 5 --refresh
 
 # Also write a standalone HTML pitch-view report
-python -m fpl_forecast --gameweek 5 --html squad.html
+python -m fpl_forecast recommend --gameweek 5 --html squad.html
 ```
 
 `--html` writes a self-contained report (inline CSS, no external
@@ -56,18 +65,74 @@ requests) with:
 - the starting XI laid out on a pitch by position, captain/vice-captain
   badges, a budget bar, and the bench in sub order;
 - availability% and "rotation risk" / "limited data" flags on every card;
-- each squad club's next 5 gameweeks of fixtures, colour-coded by FDR;
-- a "who else was in the mix" table per position (top 8 by xPts, with the
-  squad's actual picks highlighted) so you can see the alternatives, not
-  just the final XI;
-- the reasoning behind the top picks;
-- a glossary explaining the terminology (xPts, FDR, availability%, clean
-  sheet %, etc.).
+- this gameweek's full fixture list (every match, not just squad clubs);
+- each squad club's next 5 gameweeks of fixtures, colour-coded by FDR, plus
+  a full 20-team version of the same for spotting a transfer target's run;
+- a "who else was in the mix" table per position (top 8 by projected
+  points, with the squad's actual picks highlighted) so you can see the
+  alternatives, not just the final XI;
+- the reasoning behind the top picks, plus a score-breakdown bar chart
+  showing how each top pick's model/form/season components stack up;
+- a glossary explaining the terminology (projected points, FDR,
+  availability%, clean sheet %, fixture run, etc.).
 
 Open the file directly in a browser.
 
 API responses are cached to `data/cache/` (gitignored) so repeat runs are
 fast and don't hammer the FPL API. `--refresh` forces a live refetch.
+
+### Team tracking & transfers
+
+`recommend` builds a squad from scratch every time. From gameweek 2 onward
+you'll usually want the tool to track the squad you actually own instead,
+and suggest transfers against it rather than starting over. This is a
+small local JSON file (default `my_team.json`, gitignored) plus four
+subcommands:
+
+```bash
+# Week 1: build and save your starting squad
+python -m fpl_forecast save-team --gameweek 1
+
+# After GW1 is played: record its actual points
+python -m fpl_forecast record --gameweek 1
+
+# Ahead of GW2: see suggested transfers (dry run -- nothing is saved yet)
+python -m fpl_forecast transfers --gameweek 2
+
+# Happy with the suggestion? Apply it (updates my_team.json to the new squad)
+python -m fpl_forecast transfers --gameweek 2 --apply
+
+# After GW2 is played: record it, and repeat from `transfers` each week
+python -m fpl_forecast record --gameweek 2
+
+# Check accumulated points, free transfers, bank, and current squad any time
+python -m fpl_forecast status
+```
+
+`transfers` solves one MILP (`optimize_transfers` in
+[`src/fpl_forecast/optimizer.py`](src/fpl_forecast/optimizer.py)) that
+picks the number of transfers itself rather than being told how many to
+make: `transfers_made` is expressed as `15 - (owned players kept)`, and a
+`hits` variable lower-bounded by `transfers_made - free_transfers` is
+subtracted from the objective at 4 points each. Since the solver
+maximizes, `hits` settles exactly at `max(0, transfers_made -
+free_transfers)` at the optimum -- so 0, 1, 2+ transfers are all
+considered in the same solve and weighed against their real points cost,
+not chosen by a separate heuristic. Free transfers roll over up to a cap
+of 2 if unused (the classic FPL rule; some recent seasons allow banking
+up to 5 -- see `FREE_TRANSFER_CAP` in `constants.py` if your league uses
+a different cap). `--max-transfers` caps how many transfers are considered
+at all; `--hit-cost` overrides the -4 assumption.
+
+Only the starting XI's actual points count toward the tracked total
+(matching real FPL scoring), plus the captain's points doubled, falling
+back to the vice-captain if the captain didn't play. This does **not**
+simulate FPL's automatic substitutions for a blank non-captain starter --
+same simplification `scripts/backtest.py` makes. Transfer budget is
+computed as the owned squad's value **at today's prices** plus your
+banked money, which does not model FPL's actual sell-price rule (you
+sell for less than the current price if it's risen a lot since you
+bought, via a profit cap) -- see [Known limitations](#known-limitations).
 
 ### Hosted report (GitHub Pages)
 
@@ -109,14 +174,14 @@ pytest
 | Endpoint | Used for |
 |---|---|
 | `bootstrap-static/` | Players, teams, prices, positions, season-to-date stats, current gameweek |
-| `fixtures/?event={gw}` | Fixture list + FDR (`team_h_difficulty` / `team_a_difficulty`) for the target gameweek |
+| `fixtures/` | Full-season fixture list + FDR (`team_h_difficulty` / `team_a_difficulty`) -- fetched once and filtered locally for the target gameweek's scoring, the fixture-run factor, and the HTML report's fixture ticker/full gameweek list |
 | `element-summary/{id}/` | Per-player gameweek-by-gameweek history (recency-weighted form) and past-season summaries |
 | `team/set-piece-notes/` | Penalty/free-kick/corner-taker notes, folded in as a small MID/FWD bonus |
 | `event/{gw}/live/` | Actual per-player stats for a completed gameweek (backtesting) |
 | `dream-team/{gw}/` | The actual best-performing XI for a completed gameweek (backtest benchmark) |
 | `event-status/` | Whether a gameweek's bonus points are finalized (backtest sanity check) |
 
-### Scoring model (xPts)
+### Scoring model (Proj. Pts)
 
 There's no publicly available ground-truth "expected points" to train a
 regression against, and a full match-simulation model is out of scope for
@@ -153,41 +218,72 @@ For each player and target gameweek:
    stabilize small samples (e.g. a player who just returned from injury).
 
 The three components are blended, then the whole thing is **scaled by an
-availability probability** (see below) and nudged by a small set-piece-duty
+availability probability** (see below), nudged by a small set-piece-duty
 bonus (`+0.35` for a primary penalty taker, `+0.15` for a corner/free-kick
-taker, MID/FWD only).
+taker, MID/FWD only), and adjusted by a small **fixture-run factor** (see
+below).
 
-**Minutes reliability / rotation risk**: availability probability comes
-from, in priority order: (1) the API's own `chance_of_playing_next_round`
-if set — note this only flags injury/fitness doubts, not squad-role
-competition, so a fully-fit backup goalkeeper still reports 100 here; (2)
-the fraction of the last 6 gameweeks where the player started (≥60
-minutes), from `element-summary` history; (3) **when there's no
-current-season history yet (most notably gameweek 1 of a new season)**,
-how many games-equivalent (`minutes / 90`) they played in the most
-recently completed season, from `element-summary`'s `history_past` — ≥25
-games reads as nailed-on (0.80), ≥12 as a rotation-squad player (0.55),
-≥3 as occasional cameos only (0.30), and less than that (or a genuinely
-new-to-the-league player with no past-season record either) as unproven
-(0.15); (4) a conservative default based on current season-long minutes
-if none of the above apply. This is what keeps the optimizer from
-recommending a backup keeper or fringe squad player just because their
-per-90 stats look good in a tiny sample.
+**Availability = fitness × squad role, multiplied together, not one
+overriding the other.** An earlier version of this model treated the
+API's `chance_of_playing_next_round` as authoritative whenever it was set
+-- but that field only flags injury/fitness doubts, not squad-role
+competition: FPL reports 100 there for every fully-fit player, *including
+a fully-fit backup goalkeeper who rarely plays*. So it's now one of two
+factors multiplied together:
+- **Fitness factor**: `chance_of_playing_next_round / 100` if the API has
+  set it, else 1.0 (no doubt flagged).
+- **Squad-role factor**: is this player actually in the matchday XI most
+  weeks, from actual minutes -- the fraction of the last 6 gameweeks
+  they started (≥60 minutes), from `element-summary` history; or, **when
+  there's no current-season history yet (most notably gameweek 1 of a new
+  season)**, how many games-equivalent (`minutes / 90`) they played in the
+  most recently completed season, from `element-summary`'s `history_past`
+  — ≥25 games reads as nailed-on (0.80), ≥12 as a rotation-squad player
+  (0.55), ≥3 as occasional cameos only (0.30), and less as unproven
+  (0.15); or a conservative default from current season-long minutes if
+  neither is available.
 
-**Small-sample confidence shrinkage**: a player with only a couple of
-big cameos shouldn't get the same trust in their points-per-game as one
-with a near-full season behind it — otherwise one great 90 minutes can
-make a fringe player look like a nailed starter. Below ~900 minutes
-(10 full matches), the season-prior and no-history-form components are
-blended toward a neutral points-per-game baseline (2.0) in proportion to
-how little playing time backs them
-(`confidence = minutes / 900`, capped at 1.0). The HTML report surfaces
-this directly as a "limited data" flag on any player below 30% confidence.
+Multiplying the two means a fringe player who happens to be fully fit
+still reads as unlikely to feature, and an injury-doubtful starter still
+reads as clearly more likely to play than a fit bench option.
+
+**Small-sample confidence shrinkage applies to attacking threat too, not
+just points-per-game/form.** A player with only a couple of big cameos
+shouldn't get the same trust as one with a near-full season behind them —
+otherwise a single hot 90 minutes (a big per-90 goals/assists rate from a
+tiny sample) can make a fringe player's *model component* look like a
+proven one, which is exactly what let one such player outscore established
+players into the captaincy in early testing. Below ~900 minutes (10 full
+matches) of whichever data backs the number (current season if available,
+else last season's, discounted 15% for being a year old), points-per-game/
+form are blended toward a neutral baseline (2.0 ppg) and **attacking
+threat is shrunk multiplicatively toward 0** (there's no sensible neutral
+prior for an unproven per-90 rate other than "don't assume they'll keep
+producing at that clip"), in proportion to how little playing time backs
+them (`confidence = minutes / 900`, capped at 1.0). The HTML report
+surfaces this as a "limited data" flag below 30% confidence.
+
+**When there's no current-season data at all (gameweek 1), attacking
+threat falls back to last season's actual per-90 goals/assists rate**
+(from `history_past`) rather than assuming 0 — without this, a proven
+120-goals-a-season striker and a genuine fringe player would look equally
+blank at the start of a season. This is what lets an established player
+still project strongly at gameweek 1 despite having zero current-season
+minutes, while a one-cameo fringe player does not.
+
+**Fixture-run factor**: a small nudge (±15% max) to the model component
+based on the average FDR of the ~3 gameweeks *after* the target one (from
+the same fixture data used for the HTML report's ticker). A player who
+looks great this week but faces a brutal run right after is worth
+slightly less, since swapping them back out again soon costs a transfer
+or a hit — a lightweight way of considering near-term fixture swings
+without doing full multi-gameweek transfer planning (see
+[Known limitations](#known-limitations)).
 
 **Double/blank gameweeks**: a player's team may have 0, 1, or 2 fixtures
-in the target gameweek. Blank-gameweek players score 0 xPts (the optimizer
-will only pick them as cheap bench filler); double-gameweek players sum
-their model component across both fixtures.
+in the target gameweek. Blank-gameweek players score 0 projected points
+(the optimizer will only pick them as cheap bench filler); double-gameweek
+players sum their model component across both fixtures.
 
 **Set-piece duty** (`team/set-piece-notes/`): this endpoint returns
 free-text notes per team rather than structured taker IDs, so the parser
@@ -201,7 +297,7 @@ A proper constrained MILP solver (**PuLP**, using the bundled CBC solver),
 not a greedy heuristic — see
 [`src/fpl_forecast/optimizer.py`](src/fpl_forecast/optimizer.py). One
 integer program selects the 15-man squad **and** the starting XI
-simultaneously, maximizing total starting-XI xPts subject to:
+simultaneously, maximizing total starting-XI projected points subject to:
 
 - Exactly 15 players: 2 GK, 5 DEF, 5 MID, 3 FWD
 - Total squad cost ≤ budget (default £100.0m, configurable via `--budget`)
@@ -210,10 +306,16 @@ simultaneously, maximizing total starting-XI xPts subject to:
   starter must be in the 15-man squad
 
 Captain and vice-captain are **not** decision variables in the MILP — per
-spec, they're simply the highest- and second-highest-xPts players in the
-optimizer's chosen starting XI, assigned after the solve. Bench order is
-the 3 outfield bench players sorted by xPts (highest first = first sub),
-then the bench goalkeeper last.
+spec, they're simply the highest- and second-highest-projected-points
+players in the optimizer's chosen starting XI, assigned after the solve.
+Bench order is the 3 outfield bench players sorted by projected points
+(highest first = first sub), then the bench goalkeeper last.
+
+`optimize_transfers` (used by the `transfers` subcommand) is the same
+MILP with a `hits` variable and a linear `transfers_made` expression
+added — see [Team tracking & transfers](#team-tracking--transfers) above
+for how that embeds the -4-per-hit tradeoff directly into the objective
+instead of choosing a transfer count heuristically.
 
 ## Known limitations
 
@@ -236,11 +338,11 @@ then the bench goalkeeper last.
   availability tiers above) rather than being actively researched. This
   is a real, currently-unsolved gap: the free FPL API simply doesn't
   expose non-PL history.
-- **Heuristic scoring, not a fitted model.** The xPts weights (45/35/20,
-  the set-piece bonus sizes, the Poisson calibration constant) are
-  reasonable starting points, not fit to historical accuracy. The
-  `scripts/backtest.py` script is provided to sanity-check and tune them
-  against completed gameweeks.
+- **Heuristic scoring, not a fitted model.** The scoring weights (45/35/20,
+  the set-piece bonus sizes, the Poisson calibration constant, the fixture-
+  run nudge) are reasonable starting points, not fit to historical
+  accuracy. The `scripts/backtest.py` script is provided to sanity-check
+  and tune them against completed gameweeks.
 - **Set-piece-note parsing is a text heuristic.** `team/set-piece-notes/`
   returns free-text, not structured taker IDs; the name-matching parser
   can miss or misattribute duties if the source text's format changes or
@@ -249,10 +351,19 @@ then the bench goalkeeper last.
   own `chance_of_playing_next_round`/`status` fields and recent-minutes
   history, not press conferences or breaking news. **Flagged as a future
   improvement.**
-- **No multi-gameweek transfer planning.** This is single-gameweek squad
-  selection from scratch — it doesn't know about a squad you already own,
-  free transfers, hits, chips, or future-gameweek planning. **Explicitly
-  out of scope for v1.**
+- **Transfer suggestions are one gameweek at a time, not full multi-week
+  planning.** `transfers` picks the best transfer set for a single target
+  gameweek (weighing hits against that gameweek's points gain, with a
+  small nudge for the following ~3 gameweeks' fixture difficulty — see
+  "Fixture-run factor" above) — it does not plan several gameweeks ahead,
+  simulate banking a free transfer for a future double gameweek, or model
+  chips (wildcard, free hit, bench boost, triple captain). It also doesn't
+  model FPL's actual sell-price rule (see [Team tracking &
+  transfers](#team-tracking--transfers) above) or a player's transfer-out
+  status if they're dropped from the API entirely (e.g. relegated/left the
+  league) beyond simply excluding them from the pool. **Full multi-week
+  chip-aware planning is out of scope for v1** but the underlying MILP
+  (`optimize_transfers`) is the natural place to extend this.
 - **No betting/wagering functionality of any kind.** **Out of scope.**
 - **Backtesting caveats**: `scripts/backtest.py` reconstructs each
   player's inputs from only pre-gameweek `element-summary` history to

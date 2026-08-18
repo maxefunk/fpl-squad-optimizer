@@ -11,4 +11,7 @@ dist/
 data/*
 !data/.gitkeep
 
+# Your tracked team (personal squad state, not repo content)
+my_team.json
+
 .DS_Store

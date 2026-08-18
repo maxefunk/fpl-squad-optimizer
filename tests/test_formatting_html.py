@@ -62,7 +62,7 @@ def test_render_html_escapes_special_characters():
 def test_render_html_includes_glossary():
     html = render_html(_make_minimal_result(), gameweek=1)
     assert "What do these numbers mean?" in html
-    assert "xPts (Expected Points)" in html
+    assert "Proj. Pts (Projected Points)" in html
     assert "FDR (Fixture Difficulty Rating)" in html
 
 
@@ -91,6 +91,49 @@ def test_render_html_includes_player_pool_when_provided(sample_pool):
     assert "Who else was in the mix" in html
     assert 'class="picked"' in html  # at least one squad player appears highlighted in the pool table
     assert "picked-mark" in html
+
+
+def test_render_html_includes_gameweek_fixtures_list_when_provided():
+    result = _make_minimal_result()
+    teams_lookup = {i: f"T{i}" for i in range(1, 11)}
+    gw_fixtures = [
+        {"team_h": 1, "team_a": 2, "team_h_difficulty": 2, "team_a_difficulty": 4},
+        {"team_h": 3, "team_a": 4, "team_h_difficulty": 3, "team_a_difficulty": 3},
+    ]
+
+    html = render_html(result, gameweek=1, gw_fixtures=gw_fixtures, teams_lookup=teams_lookup)
+
+    assert "Gameweek 1 fixtures" in html
+    assert "T1" in html and "T2" in html and "T3" in html and "T4" in html
+    assert html.count("fixture-row") >= 2
+
+
+def test_render_html_omits_gameweek_fixtures_when_not_provided():
+    html = render_html(_make_minimal_result(), gameweek=1)
+    assert "Gameweek 1 fixtures" not in html
+
+
+def test_render_html_includes_full_league_ticker_when_provided():
+    result = _make_minimal_result()
+    teams = [{"id": i, "short_name": f"T{i}"} for i in range(1, 11)]
+    teams_lookup = {t["id"]: t["short_name"] for t in teams}
+    all_fixtures = [{"event": 2, "team_h": 9, "team_a": 10, "team_h_difficulty": 2, "team_a_difficulty": 4}]
+    ticker = build_fixture_ticker(teams, all_fixtures, start_gw=1, num_gws=5)
+
+    html = render_html(result, gameweek=1, fixture_ticker=ticker, teams_lookup=teams_lookup)
+
+    assert "Full-league fixture difficulty" in html
+    # Team 9/10 aren't necessarily in the squad, but must still appear since
+    # this ticker covers every club, not just the squad's.
+    non_squad_ids = {9, 10} - {p.team_id for p in result.squad}
+    if non_squad_ids:
+        assert any(f"T{tid}" in html for tid in non_squad_ids)
+
+
+def test_render_html_includes_score_breakdown_chart():
+    html = render_html(_make_minimal_result(), gameweek=1)
+    assert "Score breakdown" in html
+    assert "chart-bar-row" in html
 
 
 def _make_minimal_result():

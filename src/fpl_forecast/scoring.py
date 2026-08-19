@@ -41,6 +41,8 @@ from fpl_forecast.constants import (
     MIN_MINUTES_FOR_FULL_CONFIDENCE,
     MIN_SEASON_MINUTES_FOR_SIGNAL,
     NEUTRAL_PPG_PRIOR,
+    OWNERSHIP_CAP_FLOOR,
+    OWNERSHIP_CAP_THRESHOLD,
     PAST_SEASON_CONFIDENCE_DISCOUNT,
     PAST_SEASON_GAMES_FRINGE,
     PAST_SEASON_GAMES_NAILED,
@@ -236,6 +238,24 @@ def _squad_role_factor(player: dict, history: list[dict], history_past: list[dic
     return AVAILABILITY_NO_DATA  # no minutes on record anywhere: unproven
 
 
+def _ownership_credibility_cap(player: dict) -> float:
+    """Ceiling on squad_role_factor from selected_by_percent (see
+    OWNERSHIP_CAP_THRESHOLD in constants.py for the rationale).
+
+    Only ever pulls an availability estimate down, never up -- and only
+    when ownership data is actually present. A missing selected_by_percent
+    (no signal) returns 1.0 (no cap) rather than treating "unknown" the
+    same as "known to be near-zero".
+    """
+    raw = player.get("selected_by_percent")
+    if raw is None:
+        return 1.0
+    ownership = _to_float(raw)
+    if ownership >= OWNERSHIP_CAP_THRESHOLD:
+        return 1.0
+    return OWNERSHIP_CAP_FLOOR + (1.0 - OWNERSHIP_CAP_FLOOR) * (ownership / OWNERSHIP_CAP_THRESHOLD)
+
+
 def compute_availability_prob(
     player: dict, history: list[dict], history_past: list[dict] | None = None
 ) -> float:
@@ -251,7 +271,10 @@ def compute_availability_prob(
       of the squad-role signal, not a replacement for it. Missing (None)
       is treated as "no doubt flagged" (1.0), not "no minutes signal".
     - squad-role factor: is this player actually in the matchday XI most
-      weeks, from actual minutes played (see _squad_role_factor).
+      weeks, from actual minutes played (see _squad_role_factor) -- capped
+      by ownership credibility (see _ownership_credibility_cap) so a stale
+      or misleading minutes signal can't override what thousands of FPL
+      managers have already priced in about who's actually starting.
 
     Multiplying the two means a fringe player who happens to be fully fit
     still reads as unlikely to feature, and an injury-doubtful starter
@@ -261,6 +284,7 @@ def compute_availability_prob(
     fitness_factor = max(0.0, min(1.0, _to_float(chance_next) / 100.0)) if chance_next is not None else 1.0
 
     squad_role_factor = _squad_role_factor(player, history, history_past)
+    squad_role_factor = min(squad_role_factor, _ownership_credibility_cap(player))
 
     return max(0.0, min(1.0, fitness_factor * squad_role_factor))
 

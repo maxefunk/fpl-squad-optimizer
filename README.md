@@ -252,6 +252,23 @@ Multiplying the two means a fringe player who happens to be fully fit
 still reads as unlikely to feature, and an injury-doubtful starter still
 reads as clearly more likely to play than a fit bench option.
 
+**Ownership caps a stale squad-role signal.** For goalkeepers especially,
+clean-sheet probability (the biggest driver of their score) is team-level
+and identical whether the starter or backup plays — the squad-role factor
+above is the *only* thing telling them apart, and it can be wrong: a
+backup keeper's `history_past` minutes can land in the "nailed" tier
+(e.g. he covered an injury, or played a full season at a different club)
+even though he's clearly not first-choice now. Below 2% ownership
+(`selected_by_percent`), the squad-role factor is capped on a ramp down
+to 0.15 at 0% owned — thousands of FPL managers price in "will this
+player actually start" faster and more reliably than a minutes-based
+heuristic can. The cap only ever pulls an estimate *down*, never up, and
+a player with no ownership data at all isn't capped (no signal shouldn't
+override a real one). This is a real trade-off: a genuinely nailed player
+the crowd hasn't caught onto yet (a true differential) would also get
+capped — but recommending a guaranteed-bench player as your starting
+goalkeeper is the worse failure mode of the two.
+
 **Small-sample confidence shrinkage applies to attacking threat too, not
 just points-per-game/form.** A player with only a couple of big cameos
 shouldn't get the same trust as one with a near-full season behind them —
@@ -344,6 +361,12 @@ instead of choosing a transfer count heuristically.
 
 ## Known limitations
 
+- **The ownership credibility cap (see "Ownership caps a stale squad-role
+  signal" above) can suppress a genuine low-owned differential**, not just
+  the stale-minutes-signal case it's meant to catch — there's no way to
+  tell the two apart from ownership% alone. Deliberately accepted: an
+  over-cautious differential pick is a smaller failure than recommending
+  a guaranteed-bench player as your starting XI, but it is a real cost.
 - **Team strength ratings (and therefore FDR / clean-sheet estimates) can
   lag real squad changes.** `strength_attack_*`/`strength_defence_*` come
   straight from the FPL API, which derives them largely from recent

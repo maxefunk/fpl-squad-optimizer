@@ -90,6 +90,22 @@ AVAILABILITY_PAST_SEASON_ROTATION = 0.55
 AVAILABILITY_PAST_SEASON_FRINGE = 0.30
 AVAILABILITY_NO_DATA = 0.15  # no current- or past-season signal at all (new to the PL, academy graduate, etc.)
 
+# -- Ownership as a credibility cap on availability --------------------------
+# For goalkeepers especially, clean-sheet probability (the biggest driver of
+# their score) is team-level and identical whether the starter or backup
+# plays -- our minutes-based squad-role signal is the *only* thing telling
+# them apart, and it can be stale or simply wrong (e.g. history_past minutes
+# from a season where the "backup" covered an injury). Thousands of FPL
+# managers price in "will this player actually start" in near-real-time via
+# selected_by_percent, which is a faster and often more reliable check than
+# our own minutes heuristics. Below OWNERSHIP_CAP_THRESHOLD% ownership, the
+# squad-role factor is capped (never boosted -- this can only pull an
+# estimate down) on a ramp down to OWNERSHIP_CAP_FLOOR at 0% owned. A player
+# missing ownership data entirely is not capped (see scoring.py) -- no
+# signal shouldn't override a real one.
+OWNERSHIP_CAP_THRESHOLD = 2.0  # % owned; at or above this, no cap is applied
+OWNERSHIP_CAP_FLOOR = 0.15
+
 # Fixture-ticker window shown in the HTML report.
 FIXTURE_TICKER_GWS = 5
 

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from fpl_forecast.constants import AVAILABILITY_NO_DATA, AVAILABILITY_PAST_SEASON_FRINGE, NEUTRAL_PPG_PRIOR
+from fpl_forecast.constants import (
+    AVAILABILITY_NO_DATA,
+    AVAILABILITY_PAST_SEASON_FRINGE,
+    AVAILABILITY_PAST_SEASON_NAILED,
+    NEUTRAL_PPG_PRIOR,
+)
 from fpl_forecast.scoring import (
     build_fixture_ticker,
     build_team_strength_lookup,
@@ -98,6 +103,50 @@ def test_availability_past_season_nailed_beats_fringe():
 
     assert nailed_prob > fringe_prob
     assert fringe_prob < 0.5
+
+
+def test_availability_ownership_caps_stale_nailed_signal():
+    # The backup-GK case: history_past says "nailed" (a full season's worth
+    # of minutes, maybe covering for an injured #1 or at a different club),
+    # but almost nobody owns them -- the crowd has already priced in that
+    # they're not starting now, which our minutes heuristic alone missed.
+    player = {"chance_of_playing_next_round": None, "minutes": 0, "selected_by_percent": "0.1"}
+    nailed_last_season = [{"season_name": "2025/26", "minutes": 3200}]
+
+    prob = compute_availability_prob(player, [], nailed_last_season)
+
+    assert prob < 0.2
+
+
+def test_availability_ownership_cap_does_not_affect_well_owned_players():
+    player = {"chance_of_playing_next_round": None, "minutes": 0, "selected_by_percent": "15.0"}
+    nailed_last_season = [{"season_name": "2025/26", "minutes": 3200}]
+
+    prob = compute_availability_prob(player, [], nailed_last_season)
+
+    assert prob == AVAILABILITY_PAST_SEASON_NAILED  # comfortably above the ownership threshold, uncapped
+
+
+def test_availability_missing_ownership_data_does_not_apply_cap():
+    # No selected_by_percent key at all -- absence of a signal must not be
+    # treated the same as a known-near-zero signal.
+    player = {"chance_of_playing_next_round": None, "minutes": 0}
+    nailed_last_season = [{"season_name": "2025/26", "minutes": 3200}]
+
+    prob = compute_availability_prob(player, [], nailed_last_season)
+
+    assert prob == AVAILABILITY_PAST_SEASON_NAILED
+
+
+def test_availability_ownership_cap_never_boosts_a_weak_signal():
+    # High ownership on a player whose minutes signal is already weak must
+    # not push availability up -- the cap only ever pulls down.
+    player = {"chance_of_playing_next_round": None, "minutes": 0, "selected_by_percent": "50.0"}
+    fringe_last_season = [{"season_name": "2025/26", "minutes": 300}]
+
+    prob = compute_availability_prob(player, [], fringe_last_season)
+
+    assert prob == AVAILABILITY_PAST_SEASON_FRINGE
 
 
 def test_availability_no_data_anywhere_is_lowest():

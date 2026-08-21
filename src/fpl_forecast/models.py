@@ -25,7 +25,11 @@ class PlayerScore:
     # Structured breakdown (same numbers as in `reasons`, but typed for
     # display -- e.g. the HTML report's player-pool table and glossary).
     model_component: float = 0.0
-    form_component: float = 0.0
+    # None when there's no real recency signal to compute form from (no
+    # current-season per-GW history and no genuine live 'form' reading) --
+    # rather than fabricating a number by copying season_component, its
+    # weight is folded into season_component instead. See score_player.
+    form_component: float | None = 0.0
     season_component: float = 0.0
     clean_sheet_prob: float | None = None  # None for FWD (no CS points)
     data_confidence: float = 1.0  # 0-1: how much minutes back the season/form numbers

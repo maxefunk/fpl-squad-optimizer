@@ -136,6 +136,19 @@ def test_render_html_includes_score_breakdown_chart():
     assert "chart-bar-row" in html
 
 
+def test_render_html_score_breakdown_chart_handles_none_form_component():
+    # form_component is None for a player with no real current-season
+    # recency signal (see scoring.score_player) -- the chart must render
+    # an "n/a" row for Form instead of crashing on `f"{None:.2f}"`.
+    result = _make_minimal_result()
+    for p in result.starting_xi:
+        p.form_component = None
+
+    html = render_html(result, gameweek=1)
+
+    assert "n/a" in html
+
+
 def test_render_html_includes_most_selected_section_when_ownership_present(sample_pool):
     result = optimize_squad(sample_pool, budget=100.0, max_per_club=3)
     for i, p in enumerate(sample_pool):

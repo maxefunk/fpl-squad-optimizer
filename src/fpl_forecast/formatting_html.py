@@ -187,7 +187,11 @@ def _component_breakdown_chart_html(top_picks: list[PlayerScore]) -> str:
         return ""
 
     max_value = max(
-        (max(p.model_component, p.form_component, p.season_component) for p in top_picks), default=1.0
+        (
+            max(p.model_component, p.form_component or 0.0, p.season_component)
+            for p in top_picks
+        ),
+        default=1.0,
     )
     max_value = max(max_value, 0.1)
 
@@ -203,6 +207,14 @@ def _component_breakdown_chart_html(top_picks: list[PlayerScore]) -> str:
                 <div class="chart-bar-fill" style="width:{max(0.0, getattr(p, attr)) / max_value * 100:.1f}%;background:{color}"></div>
               </div>
               <span class="chart-bar-value">{getattr(p, attr):.2f}</span>
+            </div>
+            """
+            if getattr(p, attr) is not None
+            else f"""
+            <div class="chart-bar-row">
+              <span class="chart-bar-label">{label}</span>
+              <div class="chart-bar-track"></div>
+              <span class="chart-bar-value">n/a</span>
             </div>
             """
             for label, attr, color in bars_spec

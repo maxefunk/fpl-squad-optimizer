@@ -389,7 +389,11 @@ def test_stale_current_season_minutes_do_not_mask_history_past_fallback():
     # a stale nonzero `minutes` blocked the history_past fallback entirely,
     # so the live `form` field of "0.0" got trusted at full confidence,
     # flattening form_component to exactly 0 for every proven player
-    # regardless of who they were.
+    # regardless of who they were. A later fix over-corrected by fabricating
+    # form_component as a copy of season_component instead -- a different
+    # flattening. With no current-season per-GW history at all, there is no
+    # real recency signal to report, so form_component must be None (its
+    # weight folds into season_component) rather than any invented number.
     strength = build_team_strength_lookup([_team(1), _team(2)])
     fixtures_for_team = [{"opponent_id": 2, "is_home": True, "difficulty": 3}]
     player = _make_scoring_player(
@@ -401,10 +405,8 @@ def test_stale_current_season_minutes_do_not_mask_history_past_fallback():
 
     result = score_player(player, strength, fixtures_for_team, [], None, history_past)
 
-    assert result.form_component > 1.0  # not flattened to 0
-    # Both season and form come from the same history_past-derived figure
-    # and the same confidence, so they must agree with each other.
-    assert result.form_component == pytest.approx(result.season_component)
+    assert result.form_component is None  # no fabricated number, not flattened to 0 either
+    assert result.season_component > 1.0  # season signal still comes through from history_past
 
 
 def test_fdr_blend_differentiates_flat_team_strength():

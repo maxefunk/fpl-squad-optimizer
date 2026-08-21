@@ -313,6 +313,22 @@ signal instead. The same confidence shrinkage now also applies to
 (previously only the no-history fallback was shrunk) — a single big haul
 in the only game played so far shouldn't count at full face value either.
 
+**`form_component` is `None` when there's no real recency signal to
+compute it from — never a fabricated stand-in.** An earlier fix for the
+"form flattened to zero" bug above over-corrected: with no current-season
+`history`, it filled form in with a copy of the same past-season figure
+used for `season_component`, so every gameweek-1 player showed two
+identical-looking numbers dressed up as independent measurements — a
+different flattening, and it silently double-counted the season signal
+under two labels (35% + 20% of the blend) while looking like two separate
+ones. `compute_form_component(history)` only returns a value when there's
+an actual per-GW history to compute recency weighting from; when it can't
+(`history` is empty), `form_component` is left as `None` and its 35%
+blend weight folds into `season_component`'s instead, so the total weight
+placed on "what we know" is unchanged, but nothing is invented. The HTML
+report's score-breakdown chart and the CLI's reasoning text both show
+"n/a" for form in this case rather than a number.
+
 **Fixture-run factor**: a small nudge (±15% max) to the model component
 based on the average FDR of the ~3 gameweeks *after* the target one (from
 the same fixture data used for the HTML report's ticker). A player who

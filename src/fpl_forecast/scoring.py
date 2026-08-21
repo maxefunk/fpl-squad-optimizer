@@ -490,35 +490,38 @@ def score_player(
     if used_past_season_rate:
         confidence *= PAST_SEASON_CONFIDENCE_DISCOUNT
 
-    # When there's no current-season data, points_per_game/form must also
-    # come from history_past rather than the (stale or reset) live bootstrap
-    # fields -- otherwise `confidence` (derived from last season's minutes)
-    # would be applied to a number from a different, inconsistent source.
+    # When there's no current-season data, season_component comes from
+    # history_past rather than the (stale or reset) live bootstrap field --
+    # otherwise `confidence` (derived from last season's minutes) would be
+    # applied to a number from a different, inconsistent source.
     if used_past_season_rate:
         season_component_raw = past_season_ppg
-        form_component_raw_default = past_season_ppg
     else:
         season_component_raw = _to_float(player.get("points_per_game"))
-        form_component_raw_default = season_component_raw
 
     season_component = confidence * season_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
 
-    # Same confidence shrinkage applies to form regardless of source: real
-    # per-GW history early in a season is just as small-sample-prone as the
-    # fallbacks below (a single big haul in the only game played so far
-    # would otherwise count at full, unshrunk face value) -- confidence is
-    # season-minutes-based, not "how many rounds of history exist", so it
-    # correctly discounts a form figure backed by only one or two rounds.
+    # Form gets the same confidence shrinkage as season, but only when
+    # there's a real current-season per-GW history to compute it from (a
+    # single big haul in the only game played so far shouldn't count at
+    # full, unshrunk face value -- that's what the shrinkage is for).
+    # compute_form_component only returns None when `history` is empty,
+    # i.e. exactly the used_past_season_rate / no-data cases -- there is no
+    # distinct "recent form" signal to report there: fabricating one by
+    # copying season_component would just double-count the same number
+    # under two different labels. form_component is left as None in that
+    # case, and its blend weight folds into season_component instead --
+    # same total weight, honest about what's actually known.
     form_component_raw = compute_form_component(history)
-    if form_component_raw is None:
-        # No per-GW history to compute recency-weighted form from -- the
-        # API's own 'form' field is itself just as small-sample-prone here,
-        # so it gets the same treatment.
-        if used_past_season_rate:
-            form_component_raw = form_component_raw_default
-        else:
-            form_component_raw = _to_float(player.get("form"), default=form_component_raw_default)
-    form_component = confidence * form_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
+
+    if form_component_raw is not None:
+        form_component = confidence * form_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
+        effective_form_weight = WEIGHT_FORM_COMPONENT
+        effective_season_weight = WEIGHT_SEASON_COMPONENT
+    else:
+        form_component = None
+        effective_form_weight = 0.0
+        effective_season_weight = WEIGHT_SEASON_COMPONENT + WEIGHT_FORM_COMPONENT
 
     # Attacking threat has no sensible "neutral" prior to shrink toward other
     # than 0 -- an unproven rate shouldn't be assumed to keep producing at
@@ -587,13 +590,14 @@ def score_player(
 
     blended = (
         WEIGHT_MODEL_COMPONENT * model_total
-        + WEIGHT_FORM_COMPONENT * form_component
-        + WEIGHT_SEASON_COMPONENT * season_component
+        + effective_form_weight * (form_component if form_component is not None else 0.0)
+        + effective_season_weight * season_component
     )
     xpts = (blended + set_piece_bonus) * availability_prob
 
+    form_desc = f"{form_component:.2f}" if form_component is not None else "n/a"
     reasons.append(
-        f"model={model_total:.2f} form={form_component:.2f} "
+        f"model={model_total:.2f} form={form_desc} "
         f"season_ppg={season_component:.2f} avail={availability_prob:.0%}"
     )
 
@@ -611,7 +615,7 @@ def score_player(
         num_fixtures=len(fixtures_for_team),
         reasons=reasons,
         model_component=round(model_total, 3),
-        form_component=round(form_component, 3),
+        form_component=round(form_component, 3) if form_component is not None else None,
         season_component=round(season_component, 3),
         clean_sheet_prob=round(clean_sheet_prob, 3) if clean_sheet_prob is not None else None,
         data_confidence=round(confidence, 3),

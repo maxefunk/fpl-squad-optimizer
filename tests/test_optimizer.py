@@ -121,6 +121,50 @@ def test_captain_and_vice_are_top_two_xi_scorers(sample_pool):
     assert result.captain.xpts >= result.vice_captain.xpts
 
 
+def _captain_tiebreak_pool():
+    """Two squads are exactly tied on raw starting-XI xPts (40.0 flat,
+    whether or not "Standout" is picked -- hand-verified via a standalone
+    MILP without the captain term), but only the Standout squad lets a
+    higher-forecast player (7.0, vs 6.0 for "AltCaptain", the best player in
+    the alternative squad) wear the armband. A flat, captaincy-blind sum is
+    genuinely indifferent between the two; real FPL rules (captain's points
+    count double) make picking the standout strictly better once that's
+    accounted for -- which is exactly what the objective's captain term
+    exists to capture. Budget is set so a squad can afford Standout only by
+    downgrading both the DEF and MID "lever" slots to their cheap option,
+    or afford both lever slots' good option only by giving up Standout --
+    not both at once."""
+    pool = []
+    eid = 1
+    pool.append(make_player(eid, "GK", 1, 4.0, 3.0)); eid += 1
+    pool.append(make_player(eid, "GK", 2, 4.0, 1.0)); eid += 1
+    for i in range(4):
+        pool.append(make_player(eid, "DEF", 3 + i, 4.0, 3.0)); eid += 1
+    pool.append(make_player(eid, "DEF", 50, 5.0, 5.0, web_name="DefGood")); eid += 1
+    pool.append(make_player(eid, "DEF", 51, 3.0, 1.0, web_name="DefCheap")); eid += 1
+    for i in range(3):
+        pool.append(make_player(eid, "MID", 8 + i, 4.0, 3.0)); eid += 1
+    pool.append(make_player(eid, "MID", 11, 4.0, 6.0, web_name="AltCaptain")); eid += 1
+    pool.append(make_player(eid, "MID", 20, 5.0, 5.0, web_name="MidGood")); eid += 1
+    pool.append(make_player(eid, "MID", 21, 3.0, 1.0, web_name="MidCheap")); eid += 1
+    for i in range(2):
+        pool.append(make_player(eid, "FWD", 13 + i, 4.0, 3.0)); eid += 1
+    pool.append(make_player(eid, "FWD", 30, 8.0, 7.0, web_name="Standout")); eid += 1
+    pool.append(make_player(eid, "FWD", 31, 4.0, 3.0, web_name="FillerFWD")); eid += 1
+    return pool
+
+
+def test_captain_bonus_breaks_ties_in_favor_of_a_standout_scorer():
+    result = optimize_squad(_captain_tiebreak_pool(), budget=62.0, max_per_club=15)
+
+    assert any(p.web_name == "Standout" for p in result.squad)
+    assert result.captain.web_name == "Standout"
+    # The flat sum is unchanged from what the (rejected) alternative squad
+    # would have scored -- proving this wasn't a flat-xPts improvement, only
+    # a captaincy-value one.
+    assert result.total_xi_xpts == pytest.approx(40.0)
+
+
 def test_result_maximizes_starting_xi_xpts(sample_pool):
     result = optimize_squad(sample_pool, budget=100.0, max_per_club=3)
     naive_best_xi_xpts = sum(p.xpts for p in sorted(sample_pool, key=lambda p: p.xpts, reverse=True)[:11])
@@ -296,7 +340,10 @@ def _bench_quality_pool():
         make_player(8, "MID", 3, 4.5, 6.0),
         make_player(9, "MID", 4, 4.5, 5.5),
         make_player(10, "MID", 5, 4.5, 5.0),
-        make_player(11, "MID", 1, 4.5, 4.5),
+        # Not 4.5 (would exactly tie DEF #6 above): a genuine tie between two
+        # equally-optimal starting XIs is a real ambiguity the solver can
+        # break either way, unrelated to anything this test is checking.
+        make_player(11, "MID", 1, 4.5, 4.4),
         make_player(12, "MID", 2, 4.5, 4.0),
         make_player(13, "FWD", 3, 5.0, 6.0),
         make_player(14, "FWD", 4, 5.0, 5.5),

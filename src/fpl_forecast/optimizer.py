@@ -55,20 +55,37 @@ def optimize_squad(
 
     squad_vars = {p.element_id: pulp.LpVariable(f"squad_{p.element_id}", cat="Binary") for p in players}
     xi_vars = {p.element_id: pulp.LpVariable(f"xi_{p.element_id}", cat="Binary") for p in players}
+    captain_vars = {p.element_id: pulp.LpVariable(f"cap_{p.element_id}", cat="Binary") for p in players}
 
     by_id = {p.element_id: p for p in players}
 
-    # Objective: maximize total starting-XI xPts, plus a small secondary
-    # term rewarding outfield bench quality (see BENCH_QUALITY_WEIGHT) so
-    # bench slots aren't filled with zero-chance-of-playing fodder purely
-    # because they're marginally cheaper than a credible backup.
-    prob += pulp.lpSum(xi_vars[p.element_id] * p.xpts for p in players) + bench_quality_weight * pulp.lpSum(
-        (squad_vars[p.element_id] - xi_vars[p.element_id]) * p.xpts for p in players if p.position != "GK"
+    # Objective: maximize total starting-XI xPts, plus a second copy of
+    # whichever XI player is captained (real FPL rule: captain's points
+    # count double) so the solver actually weighs the value of rostering a
+    # standout top scorer, not just their flat contribution as one of 11
+    # equally-weighted starters -- without this term, a player with a huge
+    # single-game forecast (e.g. a nailed-on captain candidate) is worth no
+    # more to the objective than a merely-solid starter with the same xPts,
+    # even though a real week's actual score depends heavily on who wears
+    # the armband. Plus a small secondary term rewarding outfield bench
+    # quality (see BENCH_QUALITY_WEIGHT) so bench slots aren't filled with
+    # zero-chance-of-playing fodder purely because they're marginally
+    # cheaper than a credible backup.
+    prob += (
+        pulp.lpSum(xi_vars[p.element_id] * p.xpts for p in players)
+        + pulp.lpSum(captain_vars[p.element_id] * p.xpts for p in players)
+        + bench_quality_weight
+        * pulp.lpSum((squad_vars[p.element_id] - xi_vars[p.element_id]) * p.xpts for p in players if p.position != "GK")
     )
 
     # A player can only start if they're in the squad.
     for p in players:
         prob += xi_vars[p.element_id] <= squad_vars[p.element_id]
+
+    # Captain must be one of the starting XI, and there's exactly one.
+    for p in players:
+        prob += captain_vars[p.element_id] <= xi_vars[p.element_id]
+    prob += pulp.lpSum(captain_vars.values()) == 1
 
     # Exactly 15 in the squad, 11 in the starting XI.
     prob += pulp.lpSum(squad_vars.values()) == 15
@@ -191,6 +208,7 @@ def optimize_transfers(
 
     squad_vars = {p.element_id: pulp.LpVariable(f"squad_{p.element_id}", cat="Binary") for p in players}
     xi_vars = {p.element_id: pulp.LpVariable(f"xi_{p.element_id}", cat="Binary") for p in players}
+    captain_vars = {p.element_id: pulp.LpVariable(f"cap_{p.element_id}", cat="Binary") for p in players}
     hits_var = pulp.LpVariable("hits", lowBound=0)
 
     by_id = {p.element_id: p for p in players}
@@ -198,8 +216,13 @@ def optimize_transfers(
     kept_expr = pulp.lpSum(squad_vars[eid] for eid in current_squad_ids if eid in squad_vars)
     transfers_made_expr = 15 - kept_expr
 
+    # See optimize_squad for why the captain term is needed: without it the
+    # solver has no way to know that whichever XI player ends up captained
+    # scores double, so it undervalues acquiring/keeping a standout top
+    # scorer relative to several merely-solid starters with the same total.
     prob += (
         pulp.lpSum(xi_vars[p.element_id] * p.xpts for p in players)
+        + pulp.lpSum(captain_vars[p.element_id] * p.xpts for p in players)
         - hit_cost * hits_var
         + bench_quality_weight
         * pulp.lpSum(
@@ -209,6 +232,10 @@ def optimize_transfers(
 
     for p in players:
         prob += xi_vars[p.element_id] <= squad_vars[p.element_id]
+
+    for p in players:
+        prob += captain_vars[p.element_id] <= xi_vars[p.element_id]
+    prob += pulp.lpSum(captain_vars.values()) == 1
 
     prob += pulp.lpSum(squad_vars.values()) == 15
     prob += pulp.lpSum(xi_vars.values()) == XI_SIZE

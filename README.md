@@ -369,8 +369,18 @@ A proper constrained MILP solver (**PuLP**, using the bundled CBC solver),
 not a greedy heuristic — see
 [`src/fpl_forecast/optimizer.py`](src/fpl_forecast/optimizer.py). One
 integer program selects the 15-man squad **and** the starting XI
-simultaneously, maximizing total starting-XI projected points (plus a
-small secondary term, see below) subject to:
+simultaneously, maximizing total starting-XI projected points **plus a
+second copy of whichever XI player is captained** (a binary "is captain"
+variable per player, constrained to exactly one and only among the chosen
+XI) — since a real captain's points count double, without this term the
+objective would value a standout single-game forecast no more than a
+merely-solid starter with the same points, even though who wears the
+armband materially changes a real week's score. This directly affects
+*which* squad gets picked, not just who's labeled captain afterward: see
+the regression test that ties two candidate squads exactly on raw
+starting-XI points, where only accounting for the captain's double-count
+makes including the higher-forecast player the better choice. Plus a small
+secondary term, see below, subject to:
 
 - Exactly 15 players: 2 GK, 5 DEF, 5 MID, 3 FWD
 - Total squad cost ≤ budget (default £100.0m, configurable via `--budget`)
@@ -378,11 +388,14 @@ small secondary term, see below) subject to:
 - A valid starting XI: 1 GK, 3–5 DEF, 2–5 MID, 1–3 FWD, 11 total, and every
   starter must be in the 15-man squad
 
-Captain and vice-captain are **not** decision variables in the MILP — per
-spec, they're simply the highest- and second-highest-projected-points
-players in the optimizer's chosen starting XI, assigned after the solve.
-Bench order is the 3 outfield bench players sorted by projected points
-(highest first = first sub), then the bench goalkeeper last.
+The captain decision variable itself is only used to shape *which* squad
+gets selected; the `captain`/`vice_captain` fields on the result are still
+simply assigned post-hoc as the highest- and second-highest-projected-
+points players in the optimizer's chosen starting XI (the two will always
+agree, since the objective rewards putting the captain bonus on the best
+available XI player anyway). Bench order is the 3 outfield bench players
+sorted by projected points (highest first = first sub), then the bench
+goalkeeper last.
 
 **Bench quality**: the objective is *only* starting-XI points, so on its
 own the optimizer has zero preference among bench slots (they don't count

@@ -109,6 +109,17 @@ OWNERSHIP_CAP_FLOOR = 0.15
 # Fixture-ticker window shown in the HTML report.
 FIXTURE_TICKER_GWS = 5
 
+# -- FDR blend into the clean-sheet/attack model -----------------------------
+# fixture_impact() derives clean-sheet probability and attacking multiplier
+# from FPL's raw strength_attack_*/strength_defence_* team ratings -- but
+# those can be flat/near-identical across every club very early in a season
+# (before results have differentiated them), even though FPL's own FDR
+# (team_h_difficulty/team_a_difficulty) is already meaningfully
+# differentiated at that point. Blending FDR in directly means a genuinely
+# easy or hard fixture still moves the estimate even when the underlying
+# strength ratings haven't caught up yet.
+FDR_BLEND_WEIGHT = 0.08  # multiplier change per FDR point away from neutral (3)
+
 # -- Near-term fixture-run factor --------------------------------------------
 # A player who looks great for the target gameweek but faces a brutal run
 # immediately afterward is a worse pick than the raw single-GW xPts implies,

@@ -231,9 +231,14 @@ def test_score_player_shrinks_small_sample_points_per_game():
 
     nailed_player = _make_scoring_player(minutes=1800)
     cameo_player = _make_scoring_player(minutes=90)
+    # A real player accumulates minutes by having per-GW history rows; the
+    # gate for "trust current-season data" is history, not the minutes
+    # total alone (see score_player), so both need at least one row.
+    nailed_history = [{"round": 1, "total_points": 6, "minutes": 90}]
+    cameo_history = [{"round": 1, "total_points": 6, "minutes": 90}]
 
-    nailed_score = score_player(nailed_player, strength, fixtures_for_team, [], None, [])
-    cameo_score = score_player(cameo_player, strength, fixtures_for_team, [], None, [])
+    nailed_score = score_player(nailed_player, strength, fixtures_for_team, nailed_history, None, [])
+    cameo_score = score_player(cameo_player, strength, fixtures_for_team, cameo_history, None, [])
 
     assert nailed_score.data_confidence == 1.0
     assert cameo_score.data_confidence < 0.2
@@ -265,8 +270,11 @@ def test_hot_cameo_does_not_outscore_established_player_on_attacking_threat():
         expected_assists_per_90="0.2",
     )
 
-    cameo_score = score_player(hot_cameo, strength, fixtures_for_team, [], None, [])
-    established_score = score_player(established, strength, fixtures_for_team, [], None, [])
+    cameo_history = [{"round": 1, "total_points": 15, "minutes": 90}]  # one big haul, no track record beyond it
+    established_history = [{"round": 1, "total_points": 6, "minutes": 90}]
+
+    cameo_score = score_player(hot_cameo, strength, fixtures_for_team, cameo_history, None, [])
+    established_score = score_player(established, strength, fixtures_for_team, established_history, None, [])
 
     assert cameo_score.data_confidence < 0.2
     assert established_score.xpts > cameo_score.xpts
@@ -370,3 +378,55 @@ def test_score_player_applies_fixture_run_multiplier():
     baseline_score = score_player(player, strength, fixtures_for_team, [], None, [])
 
     assert easy_score.model_component > baseline_score.model_component > hard_score.model_component
+
+
+def test_stale_current_season_minutes_do_not_mask_history_past_fallback():
+    # Reproduces a real gameweek-1 report bug: the FPL API can carry over
+    # last season's aggregate `minutes`/`points_per_game` right up until the
+    # new season's first gameweek is played, even though `history` (this
+    # season's per-GW rows) correctly starts empty and `form` correctly
+    # resets to "0.0". Gating on `minutes` (as an earlier version did) meant
+    # a stale nonzero `minutes` blocked the history_past fallback entirely,
+    # so the live `form` field of "0.0" got trusted at full confidence,
+    # flattening form_component to exactly 0 for every proven player
+    # regardless of who they were.
+    strength = build_team_strength_lookup([_team(1), _team(2)])
+    fixtures_for_team = [{"opponent_id": 2, "is_home": True, "difficulty": 3}]
+    player = _make_scoring_player(
+        minutes=3200,  # stale carryover from last season, NOT reset to 0
+        points_per_game="6.8",  # also stale carryover
+        form="0.0",  # correctly reset -- but must not be trusted at face value here
+    )
+    history_past = [{"season_name": "2025/26", "minutes": 3200, "goals_scored": 25, "assists": 8, "total_points": 260}]
+
+    result = score_player(player, strength, fixtures_for_team, [], None, history_past)
+
+    assert result.form_component > 1.0  # not flattened to 0
+    # Both season and form come from the same history_past-derived figure
+    # and the same confidence, so they must agree with each other.
+    assert result.form_component == pytest.approx(result.season_component)
+
+
+def test_fdr_blend_differentiates_flat_team_strength():
+    # Reproduces the other real report bug: every clean-sheet % showed
+    # exactly 26% regardless of opponent, because team strength ratings can
+    # be flat/undifferentiated very early in a season even though FPL's own
+    # FDR is already meaningful (e.g. a title contender at home to a newly
+    # promoted side). Blending FDR in must make an easy and a hard fixture
+    # produce different clean-sheet/attack numbers even with identical
+    # underlying strength ratings.
+    strength = build_team_strength_lookup([_team(1, attack=1000, defence=1000), _team(2, attack=1000, defence=1000)])
+
+    easy_cs, easy_attack, _ = fixture_impact(1, 2, True, strength, difficulty=1)
+    hard_cs, hard_attack, _ = fixture_impact(1, 2, True, strength, difficulty=5)
+    neutral_cs, neutral_attack, _ = fixture_impact(1, 2, True, strength, difficulty=3)
+
+    assert easy_cs > neutral_cs > hard_cs
+    assert easy_attack > neutral_attack > hard_attack
+
+
+def test_fdr_blend_is_a_no_op_without_a_difficulty_argument():
+    strength = build_team_strength_lookup([_team(1), _team(2)])
+    with_default = fixture_impact(1, 2, True, strength)
+    explicit_none = fixture_impact(1, 2, True, strength, difficulty=None)
+    assert with_default == explicit_none

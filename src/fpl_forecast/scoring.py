@@ -30,6 +30,7 @@ from fpl_forecast.constants import (
     AVAILABILITY_PAST_SEASON_NAILED,
     AVAILABILITY_PAST_SEASON_ROTATION,
     CLEAN_SHEET_POINTS,
+    FDR_BLEND_WEIGHT,
     FIXTURE_RUN_LOOKAHEAD_GWS,
     FIXTURE_RUN_MULTIPLIER_MAX,
     FIXTURE_RUN_MULTIPLIER_MIN,
@@ -115,7 +116,9 @@ def build_team_strength_lookup(teams: list[dict]) -> dict[int, dict]:
     return lookup
 
 
-def fixture_impact(team_id: int, opponent_id: int, is_home: bool, strength: dict) -> tuple[float, float]:
+def fixture_impact(
+    team_id: int, opponent_id: int, is_home: bool, strength: dict, difficulty: int | None = None
+) -> tuple[float, float]:
     """Return (clean_sheet_prob, attack_multiplier) for one fixture.
 
     Uses a simplified independent-Poisson model: each side's expected goals
@@ -123,6 +126,12 @@ def fixture_impact(team_id: int, opponent_id: int, is_home: bool, strength: dict
     attack) and by (opponent's defence strength inverted relative to
     league-average). Clean-sheet probability is P(0 goals conceded) under
     a Poisson(lambda_against) assumption.
+
+    If `difficulty` (FPL's own 1-5 FDR for this fixture) is given, it's
+    blended in as an additional multiplicative adjustment -- see
+    FDR_BLEND_WEIGHT for why: the strength ratings this is otherwise based
+    on can be flat/undifferentiated very early in a season, while FDR
+    already reflects real fixture difficulty at that point.
     """
     avg_attack = strength["_avg_attack"]
     avg_defence = strength["_avg_defence"]
@@ -151,6 +160,14 @@ def fixture_impact(team_id: int, opponent_id: int, is_home: bool, strength: dict
 
     attack_multiplier = lambda_for / LEAGUE_AVG_GOALS_PER_TEAM
     attack_multiplier = max(0.4, min(2.2, attack_multiplier))
+
+    if difficulty is not None:
+        # Note: this fixture's difficulty is "hard for team_id" either way
+        # (FPL's FDR is already from the rated team's perspective), so an
+        # easy FDR should both raise clean_sheet_prob and raise attack_mult.
+        fdr_factor = 1.0 + (3.0 - difficulty) * FDR_BLEND_WEIGHT
+        clean_sheet_prob = max(0.02, min(0.75, clean_sheet_prob * fdr_factor))
+        attack_multiplier = max(0.4, min(2.2, attack_multiplier * fdr_factor))
 
     return clean_sheet_prob, attack_multiplier, lambda_against
 
@@ -416,23 +433,40 @@ def score_player(
         )
 
     # -- underlying per-90 attacking output (prefer expected stats) --------
-    xg90 = _to_float(player.get("expected_goals_per_90"))
-    xa90 = _to_float(player.get("expected_assists_per_90"))
-    saves90 = _per90(_to_float(player.get("saves")), minutes)
-    confidence_minutes = minutes
+    # Whether to trust current-season bootstrap fields (points_per_game,
+    # form, expected_goals_per_90, minutes...) is gated on `history` --
+    # element-summary's per-GW list for *this* season -- rather than on
+    # `minutes` itself. FPL's season-aggregate fields (minutes,
+    # points_per_game, expected_goals_per_90...) can carry over stale
+    # values from last season right up until the new season's first
+    # gameweek is actually played, even though `form` resets to 0
+    # immediately and `history` correctly starts empty. Gating on `minutes`
+    # (as an earlier version of this did) meant that stale carryover could
+    # make the model trust a live `form` of "0.0" at full confidence,
+    # flattening every player's form component to zero regardless of who
+    # they are -- exactly the bug this fixes.
+    has_current_season_data = bool(history)
+
+    xg90 = xa90 = saves90 = 0.0
+    confidence_minutes = 0.0
     used_past_season_rate = False
     past_season_ppg = None
 
-    if xg90 == 0.0 and xa90 == 0.0 and minutes > 0:
-        # Fall back to actual goals/assists if underlying xG data is absent.
-        xg90 = _per90(_to_float(player.get("goals_scored")), minutes)
-        xa90 = _per90(_to_float(player.get("assists")), minutes)
+    if has_current_season_data:
+        xg90 = _to_float(player.get("expected_goals_per_90"))
+        xa90 = _to_float(player.get("expected_assists_per_90"))
+        saves90 = _per90(_to_float(player.get("saves")), minutes)
+        if xg90 == 0.0 and xa90 == 0.0 and minutes > 0:
+            # Fall back to actual goals/assists if underlying xG data is absent.
+            xg90 = _per90(_to_float(player.get("goals_scored")), minutes)
+            xa90 = _per90(_to_float(player.get("assists")), minutes)
+        confidence_minutes = minutes
 
-    if minutes == 0 and history_past:
-        # No current-season minutes yet (typically gameweek 1): fall back to
-        # last season's actual per-90 rate rather than assuming 0. Without
-        # this, every player looks equally unproven at the start of a
-        # season regardless of whether they're Haaland or a fringe squad
+    elif history_past:
+        # No current-season per-GW data yet (typically gameweek 1): fall
+        # back to last season's actual per-90 rate rather than assuming 0.
+        # Without this, every player looks equally unproven at the start of
+        # a season regardless of whether they're Haaland or a fringe squad
         # player -- last season's real output is a far better prior than
         # silence, discounted for being a season old (see
         # PAST_SEASON_CONFIDENCE_DISCOUNT).
@@ -469,16 +503,22 @@ def score_player(
 
     season_component = confidence * season_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
 
-    form_component = compute_form_component(history)
-    if form_component is None:
+    # Same confidence shrinkage applies to form regardless of source: real
+    # per-GW history early in a season is just as small-sample-prone as the
+    # fallbacks below (a single big haul in the only game played so far
+    # would otherwise count at full, unshrunk face value) -- confidence is
+    # season-minutes-based, not "how many rounds of history exist", so it
+    # correctly discounts a form figure backed by only one or two rounds.
+    form_component_raw = compute_form_component(history)
+    if form_component_raw is None:
         # No per-GW history to compute recency-weighted form from -- the
         # API's own 'form' field is itself just as small-sample-prone here,
-        # so it gets the same shrinkage treatment.
+        # so it gets the same treatment.
         if used_past_season_rate:
             form_component_raw = form_component_raw_default
         else:
             form_component_raw = _to_float(player.get("form"), default=form_component_raw_default)
-        form_component = confidence * form_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
+    form_component = confidence * form_component_raw + (1 - confidence) * NEUTRAL_PPG_PRIOR
 
     # Attacking threat has no sensible "neutral" prior to shrink toward other
     # than 0 -- an unproven rate shouldn't be assumed to keep producing at
@@ -494,7 +534,7 @@ def score_player(
     fixture_desc = []
     for fx in fixtures_for_team:
         cs_prob, attack_mult, lambda_against = fixture_impact(
-            team_id, fx["opponent_id"], fx["is_home"], team_strength
+            team_id, fx["opponent_id"], fx["is_home"], team_strength, difficulty=fx["difficulty"]
         )
         adj_attacking = attacking_threat_per90 * attack_mult
         model = 2.0  # appearance points, assuming a start

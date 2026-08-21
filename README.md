@@ -211,7 +211,13 @@ For each player and target gameweek:
      is `P(0 goals conceded) = e^-λ` under that Poisson assumption. This
      also scales the attacking-threat estimate up or down for fixture
      difficulty, and (for GK/DEF) applies FPL's "-1 point per 2 goals
-     conceded" deduction as an expected-value term.
+     conceded" deduction as an expected-value term. **Blended with FPL's
+     own FDR** (`team_h_difficulty`/`team_a_difficulty`, ±~16% at the
+     extremes) as an additional multiplicative adjustment — the strength
+     ratings this is otherwise based on can be flat/near-identical across
+     every club very early in a season (observed: every fixture showing
+     the exact same clean-sheet % despite FDR clearly varying 2-5), while
+     FDR is already meaningfully differentiated at that point.
    - Clean-sheet points (GK/DEF = 4, MID = 1), GK save points
      (`saves_per_90 / 3`), and the 2-point full-appearance value.
 2. **Recency-weighted form component** (35% weight) — a weighted average
@@ -292,6 +298,20 @@ threat falls back to last season's actual per-90 goals/assists rate**
 blank at the start of a season. This is what lets an established player
 still project strongly at gameweek 1 despite having zero current-season
 minutes, while a one-cameo fringe player does not.
+
+**"No current-season data" is detected from `history` (element-summary's
+per-GW list), not from `minutes`.** The FPL API can carry over last
+season's aggregate `minutes`/`points_per_game` right up until the new
+season's first gameweek is actually played, even though `form` resets to
+0 immediately and `history` correctly starts empty — an earlier version
+of this gated on `minutes == 0`, which meant a stale nonzero `minutes`
+blocked the `history_past` fallback entirely and let a literal `form` of
+"0.0" get trusted at full confidence, flattening every proven player's
+form component to exactly zero. `history` truthiness is the reliable
+signal instead. The same confidence shrinkage now also applies to
+`compute_form_component`'s result when real per-GW history *does* exist
+(previously only the no-history fallback was shrunk) — a single big haul
+in the only game played so far shouldn't count at full face value either.
 
 **Fixture-run factor**: a small nudge (±15% max) to the model component
 based on the average FDR of the ~3 gameweeks *after* the target one (from

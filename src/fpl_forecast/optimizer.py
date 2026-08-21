@@ -1,15 +1,21 @@
 """Budget-constrained squad optimizer, built on a PuLP MILP.
 
 We solve for the 15-man squad AND the starting XI simultaneously in one
-integer program: the objective maximizes total starting-XI xPts (plus a
-small secondary term rewarding outfield bench quality -- see
-BENCH_QUALITY_WEIGHT) subject to budget, squad-composition, per-club, and
-valid-XI-shape constraints. This guarantees a globally optimal combination
-for the given xPts scores and constraints (not a greedy approximation).
+integer program: the objective maximizes total starting-XI xPts, plus a
+second copy of whichever XI player is captained (captain's points count
+double in real FPL -- see the captain_vars comment in optimize_squad), plus
+a small secondary term rewarding outfield bench quality (see
+BENCH_QUALITY_WEIGHT), subject to budget, squad-composition, per-club,
+valid-XI-shape, a hard ownership floor (MIN_OWNERSHIP_PERCENT), and a
+forced-inclusion of the single most-owned player (FORCE_INCLUDE_MOST_OWNED_
+PLAYER) constraints. This guarantees a globally optimal combination for the
+given xPts scores and constraints (not a greedy approximation).
 
-Captain/vice-captain are not decision variables in the MILP -- per the
-spec, they are simply the highest- and second-highest-xPts players in the
-chosen starting XI, assigned after the solve.
+The captain decision variable only shapes *which* squad gets picked; the
+`captain`/`vice_captain` fields on the result are still simply the highest-
+and second-highest-xPts players in the chosen starting XI, assigned after
+the solve (the two always agree, since the objective already rewards
+putting the captain bonus on the best available XI player).
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ import pulp
 from fpl_forecast.constants import (
     BENCH_QUALITY_WEIGHT,
     DEFAULT_BUDGET,
+    FORCE_INCLUDE_MOST_OWNED_PLAYER,
     MAX_PER_CLUB,
     MIN_OWNERSHIP_PERCENT,
     POSITION_ORDER,
@@ -41,6 +48,7 @@ def optimize_squad(
     max_per_club: int = MAX_PER_CLUB,
     bench_quality_weight: float = BENCH_QUALITY_WEIGHT,
     min_ownership_percent: float = MIN_OWNERSHIP_PERCENT,
+    force_include_most_owned: bool = FORCE_INCLUDE_MOST_OWNED_PLAYER,
 ) -> SquadResult:
     if not players:
         raise InfeasibleError("No players available to select from.")
@@ -106,6 +114,15 @@ def optimize_squad(
     for team_id in team_ids:
         team_players = [p for p in players if p.team_id == team_id]
         prob += pulp.lpSum(squad_vars[p.element_id] for p in team_players) <= max_per_club
+
+    # The single most-owned player in the pool is forced in outright (see
+    # FORCE_INCLUDE_MOST_OWNED_PLAYER): the crowd's #1 pick often reflects
+    # ceiling/explosiveness or team-news signal this expected-value model
+    # doesn't capture, the same reasoning behind trusting the crowd at the
+    # bottom end via MIN_OWNERSHIP_PERCENT.
+    if force_include_most_owned:
+        most_owned = max(players, key=lambda p: p.selected_by_percent)
+        prob += squad_vars[most_owned.element_id] == 1
 
     solver = pulp.PULP_CBC_CMD(msg=False)
     prob.solve(solver)

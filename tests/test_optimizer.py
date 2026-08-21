@@ -438,3 +438,37 @@ def test_optimize_transfers_does_not_force_sell_existing_low_ownership_player():
     assert tr.transfers_made == 0
     assert any(p.web_name == "Fodder" for p in tr.result.squad)
     assert tr.hits == 0  # a free transfer, no reason to skip a strictly-better bench option
+
+
+def test_optimize_squad_force_includes_the_most_owned_player(sample_pool):
+    # A poor-value, expensive player that the xPts objective would never
+    # pick on its own merits, but who's overwhelmingly the most-owned
+    # player in the pool -- the crowd's #1 pick is trusted as a hard signal
+    # (see FORCE_INCLUDE_MOST_OWNED_PLAYER), regardless of what the model's
+    # own numbers say.
+    crowd_favorite = make_player(999, "FWD", 1, 14.0, 0.5, web_name="CrowdFavorite", selected_by_percent=90.0)
+    pool = sample_pool + [crowd_favorite]
+
+    result = optimize_squad(pool, budget=100.0, max_per_club=3)
+
+    assert any(p.web_name == "CrowdFavorite" for p in result.squad)
+
+
+def test_optimize_squad_force_include_can_be_disabled(sample_pool):
+    crowd_favorite = make_player(999, "FWD", 1, 14.0, 0.5, web_name="CrowdFavorite", selected_by_percent=90.0)
+    pool = sample_pool + [crowd_favorite]
+
+    result = optimize_squad(pool, budget=100.0, max_per_club=3, force_include_most_owned=False)
+
+    assert not any(p.web_name == "CrowdFavorite" for p in result.squad)
+
+
+def test_optimize_squad_force_include_raises_when_unaffordable(sample_pool):
+    # The most-owned player is so expensive that no valid 15-man squad can
+    # both include them and stay within budget -- this must surface as the
+    # normal InfeasibleError, not silently ignore the crowd-favorite rule.
+    crowd_favorite = make_player(999, "FWD", 1, 95.0, 0.5, web_name="CrowdFavorite", selected_by_percent=90.0)
+    pool = sample_pool + [crowd_favorite]
+
+    with pytest.raises(InfeasibleError):
+        optimize_squad(pool, budget=100.0, max_per_club=3)

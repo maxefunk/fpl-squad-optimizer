@@ -289,6 +289,24 @@ just because their ownership has since dipped below the floor — the floor
 blocks new low-ownership buys, it doesn't manufacture an unrequested,
 potentially hit-costing sell.
 
+**The single most-owned player in the pool is forced into the squad
+outright**, regardless of what the xPts objective would otherwise pick
+(`FORCE_INCLUDE_MOST_OWNED_PLAYER` in `constants.py`, applied by
+`optimize_squad` — fresh squad recommendations only, not `transfers`, to
+avoid ever manufacturing an unplanned, potentially hit-costing forced buy
+mid-season). The reasoning mirrors the ownership floor, at the opposite
+end: an expected-goals-based model scores on *average* per-90 output, so it
+structurally undervalues an explosive, high-ceiling player whose real
+fantasy value comes from hat-trick weeks and near-certain penalties (e.g.
+a genuinely elite, highest-priced striker projecting only narrowly above
+much cheaper alternatives, despite being nearly everyone's clear #1 pick).
+Tens of thousands of managers' actual money is a signal this model doesn't
+otherwise have access to. This can still raise `InfeasibleError` if that
+player is so expensive no valid 15-man squad both includes them and stays
+in budget — pass `force_include_most_owned=False` to `optimize_squad` to
+turn it off entirely (e.g. for the backtest script, where reproducing the
+model's own unconstrained judgment matters more than crowd-following).
+
 **Small-sample confidence shrinkage applies to attacking threat too, not
 just points-per-game/form.** A player with only a couple of big cameos
 shouldn't get the same trust as one with a near-full season behind them —

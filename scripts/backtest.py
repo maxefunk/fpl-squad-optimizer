@@ -144,7 +144,12 @@ def run_backtest(gameweek: int, budget: float, max_per_club: int, cache_dir: str
     scores = score_all_players(players_pit, bootstrap["teams"], fixtures, summaries_pit, set_piece_notes)
 
     try:
-        result = optimize_squad(scores, budget=budget, max_per_club=max_per_club)
+        # force_include_most_owned=False: backtesting is meant to sanity-check
+        # and tune the model's own scoring weights against real outcomes --
+        # forcing in the crowd's #1 pick regardless of the model's confidence
+        # would evaluate a hybrid of "model + crowd override" instead of the
+        # model's own judgment, muddying that signal.
+        result = optimize_squad(scores, budget=budget, max_per_club=max_per_club, force_include_most_owned=False)
     except InfeasibleError as exc:
         print(f"Could not build a backtest squad: {exc}", file=sys.stderr)
         sys.exit(1)

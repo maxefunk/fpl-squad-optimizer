@@ -114,6 +114,17 @@ OWNERSHIP_CAP_FLOOR = 0.15
 # shouldn't be recommending, however good its own numbers say it looks.
 MIN_OWNERSHIP_PERCENT = 10.0
 
+# Force the single most-owned player in the eligible pool (highest
+# selected_by_percent, after the ownership floor above is applied) into the
+# squad outright, regardless of what the xPts-maximizing objective would
+# otherwise pick. The crowd's #1 pick reflects information this model
+# doesn't capture well -- explosive/ceiling scorers, set-piece nailed-on
+# status, team news -- so it's trusted as a hard signal here, the same way
+# MIN_OWNERSHIP_PERCENT trusts the crowd at the bottom end. This can still
+# raise InfeasibleError if that player's cost makes a valid 15-man squad
+# unaffordable under the given budget.
+FORCE_INCLUDE_MOST_OWNED_PLAYER = True
+
 # Fixture-ticker window shown in the HTML report.
 FIXTURE_TICKER_GWS = 5
 

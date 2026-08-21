@@ -12,7 +12,11 @@ def make_player(
     cost: float,
     xpts: float,
     web_name: str | None = None,
+    selected_by_percent: float = 50.0,
 ) -> PlayerScore:
+    # Defaults well above MIN_OWNERSHIP_PERCENT so existing tests that don't
+    # care about ownership aren't tripped up by the optimizer's hard
+    # ownership floor -- tests exercising that floor pass it explicitly.
     return PlayerScore(
         element_id=element_id,
         web_name=web_name or f"Player{element_id}",
@@ -26,6 +30,7 @@ def make_player(
         availability_prob=0.9,
         num_fixtures=1,
         reasons=[],
+        selected_by_percent=selected_by_percent,
     )
 
 

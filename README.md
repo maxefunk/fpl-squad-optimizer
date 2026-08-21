@@ -275,6 +275,20 @@ the crowd hasn't caught onto yet (a true differential) would also get
 capped — but recommending a guaranteed-bench player as your starting
 goalkeeper is the worse failure mode of the two.
 
+**Below 10% ownership, a player is excluded from selection outright.**
+This is a separate, blunter rule from the credibility cap above: the cap
+only pulls an estimate *down* and a player can still be picked if the
+number that survives is good enough; the 10% floor (`MIN_OWNERSHIP_PERCENT`
+in `constants.py`) removes sub-10%-owned players from the optimizer's
+candidate pool entirely, by explicit choice — a pick this far outside what
+the rest of the FPL player base trusts is a differential this tool
+shouldn't be recommending, no matter how good its own model likes the
+numbers. It applies when recommending a squad from scratch and when
+suggesting transfers, but a player you already own is never force-sold
+just because their ownership has since dipped below the floor — the floor
+blocks new low-ownership buys, it doesn't manufacture an unrequested,
+potentially hit-costing sell.
+
 **Small-sample confidence shrinkage applies to attacking threat too, not
 just points-per-game/form.** A player with only a couple of big cameos
 shouldn't get the same trust as one with a near-full season behind them —
@@ -403,6 +417,15 @@ instead of choosing a transfer count heuristically.
   tell the two apart from ownership% alone. Deliberately accepted: an
   over-cautious differential pick is a smaller failure than recommending
   a guaranteed-bench player as your starting XI, but it is a real cost.
+- **The hard 10% ownership floor (`MIN_OWNERSHIP_PERCENT`) excludes every
+  low-owned differential, not just the ones the credibility cap above is
+  meant to catch.** A breakout player the crowd hasn't caught up to yet, or
+  a promoted-team standout who's still under-owned relative to their
+  actual chances, will never be recommended even at 0% cap-adjusted
+  availability, purely because ownership hasn't risen past 10% yet. This
+  is a deliberate, explicit product choice (not a heuristic side effect
+  like the cap) to keep recommendations within what the wider FPL
+  player base already trusts.
 - **Team strength ratings (and therefore FDR / clean-sheet estimates) can
   lag real squad changes.** `strength_attack_*`/`strength_defence_*` come
   straight from the FPL API, which derives them largely from recent

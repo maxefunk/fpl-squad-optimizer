@@ -162,7 +162,8 @@ def test_render_html_includes_most_selected_section_when_ownership_present(sampl
 
 def test_render_html_omits_most_selected_section_without_ownership_data(sample_pool):
     result = optimize_squad(sample_pool, budget=100.0, max_per_club=3)
-    # sample_pool players all default to selected_by_percent=0.0 (no data).
+    for p in sample_pool:
+        p.selected_by_percent = 0.0  # simulate no ownership data available
     html = render_html(result, gameweek=1, all_scores=sample_pool)
 
     assert "Most selected players" not in html

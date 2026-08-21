@@ -106,6 +106,14 @@ AVAILABILITY_NO_DATA = 0.15  # no current- or past-season signal at all (new to 
 OWNERSHIP_CAP_THRESHOLD = 2.0  # % owned; at or above this, no cap is applied
 OWNERSHIP_CAP_FLOOR = 0.15
 
+# Hard ownership floor: below this ownership%, a player is excluded from
+# selection entirely by the optimizer, not just soft-capped down like
+# OWNERSHIP_CAP_THRESHOLD above (which only pulls availability_prob down,
+# never removes a player outright). This is a blunter, explicit product
+# decision -- a pick barely anyone else trusts carries risk this tool
+# shouldn't be recommending, however good its own numbers say it looks.
+MIN_OWNERSHIP_PERCENT = 10.0
+
 # Fixture-ticker window shown in the HTML report.
 FIXTURE_TICKER_GWS = 5
 

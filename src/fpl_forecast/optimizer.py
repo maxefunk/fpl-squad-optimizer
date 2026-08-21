@@ -20,6 +20,7 @@ from fpl_forecast.constants import (
     BENCH_QUALITY_WEIGHT,
     DEFAULT_BUDGET,
     MAX_PER_CLUB,
+    MIN_OWNERSHIP_PERCENT,
     POSITION_ORDER,
     SQUAD_COMPOSITION,
     TRANSFER_HIT_COST,
@@ -39,9 +40,16 @@ def optimize_squad(
     budget: float = DEFAULT_BUDGET,
     max_per_club: int = MAX_PER_CLUB,
     bench_quality_weight: float = BENCH_QUALITY_WEIGHT,
+    min_ownership_percent: float = MIN_OWNERSHIP_PERCENT,
 ) -> SquadResult:
     if not players:
         raise InfeasibleError("No players available to select from.")
+
+    players = [p for p in players if p.selected_by_percent >= min_ownership_percent]
+    if not players:
+        raise InfeasibleError(
+            f"No players meet the {min_ownership_percent:.0f}% ownership floor."
+        )
 
     prob = pulp.LpProblem("fpl_squad_selection", pulp.LpMaximize)
 
@@ -142,6 +150,7 @@ def optimize_transfers(
     hit_cost: float = TRANSFER_HIT_COST,
     max_transfers: int | None = None,
     bench_quality_weight: float = BENCH_QUALITY_WEIGHT,
+    min_ownership_percent: float = MIN_OWNERSHIP_PERCENT,
 ) -> TransferResult:
     """Find the transfer set (0 or more swaps) that maximizes net gain.
 
@@ -165,6 +174,18 @@ def optimize_transfers(
     """
     if not players:
         raise InfeasibleError("No players available to select from.")
+
+    # The ownership floor blocks new low-ownership buys, but never forces
+    # out a player already owned purely because their ownership% has since
+    # slipped below it -- that would mean an unrequested, potentially
+    # hit-costing sell with no beneficial replacement in mind.
+    players = [
+        p for p in players if p.selected_by_percent >= min_ownership_percent or p.element_id in current_squad_ids
+    ]
+    if not players:
+        raise InfeasibleError(
+            f"No players meet the {min_ownership_percent:.0f}% ownership floor."
+        )
 
     prob = pulp.LpProblem("fpl_transfer_selection", pulp.LpMaximize)
 

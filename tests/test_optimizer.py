@@ -332,4 +332,62 @@ def test_optimize_transfers_also_prefers_credible_bench():
     assert tr.transfers_made == 1
     assert tr.transfers_in[0].web_name == "Credible"
     assert tr.transfers_out[0].web_name == "Fodder"
+
+
+def test_optimize_squad_excludes_players_below_ownership_floor(sample_pool):
+    # A single standout player, cheap and huge xPts, would otherwise be an
+    # obvious pick -- but at 3% ownership it must be excluded outright, not
+    # merely down-weighted, regardless of how good its own numbers look.
+    differential = make_player(999, "MID", 1, 4.0, 20.0, web_name="Differential", selected_by_percent=3.0)
+    pool = sample_pool + [differential]
+
+    result = optimize_squad(pool, budget=100.0, max_per_club=3)
+
+    assert not any(p.web_name == "Differential" for p in result.squad)
+
+
+def test_optimize_squad_raises_when_no_players_meet_ownership_floor(sample_pool):
+    for p in sample_pool:
+        p.selected_by_percent = 5.0  # every player below the 10% floor
+
+    with pytest.raises(InfeasibleError):
+        optimize_squad(sample_pool, budget=100.0, max_per_club=3)
+
+
+def test_optimize_transfers_excludes_new_low_ownership_buys():
+    pool = _bench_quality_pool()
+    # "Credible" would otherwise win the contested bench slot (see the test
+    # above) but is now a low-ownership differential -- it must not be
+    # transferred in, even though nothing else about the scenario changed.
+    for p in pool:
+        if p.web_name == "Credible":
+            p.selected_by_percent = 4.0
+    current_ids = {p.element_id for p in pool if p.web_name != "Credible"}
+    budget = 70.0
+
+    tr = optimize_transfers(pool, current_ids, free_transfers=1, budget=budget)
+
+    assert not any(p.web_name == "Credible" for p in tr.result.squad)
+
+
+def test_optimize_transfers_does_not_force_sell_existing_low_ownership_player():
+    # A player already owned whose ownership% has since slipped below the
+    # floor must still be keepable -- the floor blocks new low-ownership
+    # buys, it doesn't force an unrequested, potentially hit-costing sell.
+    # "Credible" is also given low ownership here so it can't be bought in
+    # as a replacement, isolating the "keep what's owned" behavior from the
+    # separate bench-quality preference exercised above.
+    pool = _bench_quality_pool()
+    for p in pool:
+        if p.web_name == "Fodder":
+            p.selected_by_percent = 1.0
+        elif p.web_name == "Credible":
+            p.selected_by_percent = 4.0
+    current_ids = {p.element_id for p in pool if p.web_name != "Credible"}
+    budget = 70.0
+
+    tr = optimize_transfers(pool, current_ids, free_transfers=1, budget=budget)
+
+    assert tr.transfers_made == 0
+    assert any(p.web_name == "Fodder" for p in tr.result.squad)
     assert tr.hits == 0  # a free transfer, no reason to skip a strictly-better bench option

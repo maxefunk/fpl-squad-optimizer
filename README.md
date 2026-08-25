@@ -39,8 +39,8 @@ pip install -e . -r requirements.txt
 
 The CLI is split into subcommands. `recommend` is the one-off "build me a
 squad from scratch" mode from the original spec; the rest (`save-team`,
-`record`, `transfers`, `status`) track a squad you actually own across
-gameweeks — see [Team tracking & transfers](#team-tracking--transfers).
+`import-team`, `record`, `transfers`, `status`) track a squad you actually
+own across gameweeks — see [Team tracking & transfers](#team-tracking--transfers).
 
 ```bash
 # Recommend a squad for a specific gameweek
@@ -91,12 +91,17 @@ fast and don't hammer the FPL API. `--refresh` forces a live refetch.
 `recommend` builds a squad from scratch every time. From gameweek 2 onward
 you'll usually want the tool to track the squad you actually own instead,
 and suggest transfers against it rather than starting over. This is a
-small local JSON file (default `my_team.json`, gitignored) plus four
+small local JSON file (default `my_team.json`, gitignored) plus five
 subcommands:
 
 ```bash
 # Week 1: build and save your starting squad
 python -m fpl_forecast save-team --gameweek 1
+
+# ...OR, if you already play FPL and own a squad this tool didn't build:
+# import it by your public FPL team ID (the number in your team's URL on
+# the FPL website) instead of building from scratch.
+python -m fpl_forecast import-team --team-id 1234567 --free-transfers 1
 
 # After GW1 is played: record its actual points
 python -m fpl_forecast record --gameweek 1
@@ -113,6 +118,23 @@ python -m fpl_forecast record --gameweek 2
 # Check accumulated points, free transfers, bank, and current squad any time
 python -m fpl_forecast status
 ```
+
+**`import-team`** pulls your real squad from FPL's public
+`entry/{team_id}/event/{gw}/picks/` endpoint — your 15 players, captain,
+vice-captain, starting XI vs. bench, and bank at that gameweek's deadline
+— and saves it as your tracked team, exactly as if you'd built it with
+`save-team`. This is deliberately **not** the authenticated "my-team"
+endpoint (that needs a logged-in session/cookies, which this tool avoids
+entirely); `entry/{id}/event/{gw}/picks/` is public, needs no login, and
+works for any manager's team ID, including your own. `--gameweek` defaults
+to your current (or most recently finished) gameweek, i.e. your live squad
+right now — pass a specific one to import an earlier snapshot instead.
+`--free-transfers` has no default and must be supplied: FPL doesn't expose
+"free transfers remaining" on this endpoint (it depends on rollover
+history and chip usage), so check the FPL app/website and pass it in
+directly, same as `save-team --free-transfers`. Once imported, `transfers`,
+`record`, and `status` all work identically regardless of whether the
+tracked squad came from `save-team` or `import-team`.
 
 `transfers` solves one MILP (`optimize_transfers` in
 [`src/fpl_forecast/optimizer.py`](src/fpl_forecast/optimizer.py)) that

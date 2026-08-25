@@ -4,6 +4,7 @@ Subcommands:
   recommend    Recommend a squad for a gameweek from scratch (default; this
                is what earlier versions of this tool did with no subcommand)
   save-team    Save a freshly-recommended squad as your tracked team
+  import-team  Import a squad you already own, by your public FPL team ID
   record       Record a completed gameweek's actual points against your team
   transfers    Suggest transfers for your tracked team ahead of a gameweek
   status       Show your tracked team's accumulated points and current squad
@@ -34,6 +35,7 @@ from fpl_forecast.team_state import (
     load_team,
     record_gameweek,
     save_team,
+    team_state_from_entry_picks,
     team_state_from_squad_result,
 )
 
@@ -52,6 +54,19 @@ def resolve_default_gameweek(events: list[dict]) -> int:
         if not e.get("finished"):
             return e["id"]
     return events[-1]["id"]
+
+
+def resolve_current_or_last_finished_gameweek(events: list[dict]) -> int:
+    """Which gameweek's picks reflect your live squad right now -- used when
+    importing an existing team, as opposed to resolve_default_gameweek's
+    "next gameweek to plan for"."""
+    for e in events:
+        if e.get("is_current"):
+            return e["id"]
+    finished = [e["id"] for e in events if e.get("finished")]
+    if finished:
+        return max(finished)
+    return events[0]["id"]
 
 
 def score_gameweek(gameweek: int | None, cache_dir: str, force_refresh: bool = False):
@@ -175,6 +190,36 @@ def cmd_save_team(args: argparse.Namespace) -> int:
 
     print(format_squad_result(result, gw))
     print(f"\nSaved as your tracked team (gameweek {gw}) to {args.team_file}")
+    return 0
+
+
+def cmd_import_team(args: argparse.Namespace) -> int:
+    client = FPLClient(cache_dir=args.cache_dir)
+    try:
+        bootstrap = client.get_bootstrap_static(force_refresh=args.refresh)
+        gw = args.gameweek or resolve_current_or_last_finished_gameweek(bootstrap["events"])
+        picks_data = client.get_entry_picks(args.team_id, gw, force_refresh=args.refresh)
+    except requests.HTTPError as exc:
+        print(f"Could not find FPL team ID {args.team_id} for gameweek {args.gameweek or gw}: {exc}", file=sys.stderr)
+        return 1
+    except requests.RequestException as exc:
+        print(f"FPL API request failed: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        state = team_state_from_entry_picks(
+            picks_data, bootstrap["elements"], bootstrap["teams"], free_transfers=args.free_transfers
+        )
+    except (KeyError, ValueError) as exc:
+        print(f"Could not import this team: {exc}", file=sys.stderr)
+        return 1
+
+    save_team(args.team_file, state)
+
+    captain_name = next(p.web_name for p in state.squad if p.element_id == state.captain_id)
+    print(f"Imported gameweek {gw} squad for FPL team ID {args.team_id} ({len(state.squad)} players).")
+    print(f"Captain: {captain_name}  |  Bank: £{state.bank:.1f}m  |  Free transfers: {state.free_transfers}")
+    print(f"Saved to {args.team_file}. Run `transfers` to get suggestions from here.")
     return 0
 
 
@@ -345,6 +390,14 @@ def main(argv: list[str] | None = None) -> int:
     _add_team_file_arg(p_save)
     _add_common_data_args(p_save)
     p_save.set_defaults(func=cmd_save_team)
+
+    p_import = subparsers.add_parser("import-team", help="Import a squad you already own, by your public FPL team ID")
+    p_import.add_argument("--team-id", type=int, required=True, help="Your public FPL team ID (the number in your team's URL on the FPL website)")
+    p_import.add_argument("--gameweek", "-g", type=int, default=None, help="Which gameweek's picks to import (default: your current/most recent squad)")
+    p_import.add_argument("--free-transfers", type=int, required=True, help="Free transfers you currently have available (not available from the API -- check the FPL website/app)")
+    _add_team_file_arg(p_import)
+    _add_common_data_args(p_import)
+    p_import.set_defaults(func=cmd_import_team)
 
     p_record = subparsers.add_parser("record", help="Record a completed gameweek's actual points")
     p_record.add_argument("--gameweek", "-g", type=int, required=True, help="Completed gameweek to record")

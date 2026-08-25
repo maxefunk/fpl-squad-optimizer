@@ -150,3 +150,19 @@ class FPLClient:
 
     def get_event_status(self, force_refresh: bool = False) -> dict:
         return self._get("event-status/", "event_status", ttl=60 * 10, force_refresh=force_refresh)
+
+    def get_entry(self, team_id: int, force_refresh: bool = False) -> dict:
+        """Public manager-summary endpoint (team name, bank/value as of the
+        last deadline, etc.) -- NOT the authenticated "my-team" endpoint, no
+        login required. Used to import an existing FPL squad by team ID."""
+        return self._get(f"entry/{team_id}/", f"entry_{team_id}", force_refresh=force_refresh)
+
+    def get_entry_picks(self, team_id: int, event_id: int, force_refresh: bool = False) -> dict:
+        """Public per-gameweek picks for a manager: which 15 players, who's
+        captain/vice-captain, starting XI vs bench, and that gameweek's bank/
+        value snapshot. No login required."""
+        return self._get(
+            f"entry/{team_id}/event/{event_id}/picks/",
+            f"entry_{team_id}_picks_{event_id}",
+            force_refresh=force_refresh,
+        )

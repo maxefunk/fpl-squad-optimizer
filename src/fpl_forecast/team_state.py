@@ -2,9 +2,13 @@
 gameweeks so the CLI can compute accumulated points and suggest transfers.
 
 Stored as a small JSON file (default `my_team.json`) rather than pulled
-from FPL's authenticated "my-team" endpoint -- that endpoint requires a
-logged-in session (cookies), while everything else in this tool works
-against the public, unauthenticated API. See the README for the tradeoff.
+live from FPL every time. Two ways to populate it: build a fresh squad with
+this tool's own optimizer (`team_state_from_squad_result`), or import a
+squad you already own elsewhere using your public FPL team ID
+(`team_state_from_entry_picks`, via `entry/{id}/event/{gw}/picks/` --
+NOT the authenticated "my-team" endpoint, which needs a logged-in session
+and is deliberately avoided; the entry/picks endpoint is public and needs
+no login, only your team ID). See the README for the tradeoff.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from fpl_forecast.constants import POSITIONS
 from fpl_forecast.models import PlayerScore, SquadResult
 
 
@@ -107,6 +112,64 @@ def team_state_from_squad_result(
         squad=squad,
         captain_id=result.captain.element_id,
         vice_captain_id=result.vice_captain.element_id,
+        bank=bank,
+        free_transfers=free_transfers,
+    )
+
+
+def team_state_from_entry_picks(
+    picks_data: dict,
+    players: list[dict],
+    teams: list[dict],
+    free_transfers: int,
+    bank: float | None = None,
+) -> TeamState:
+    """Build a TeamState from a real FPL manager's picks for one gameweek
+    (`FPLClient.get_entry_picks`), so you can import a squad you already
+    own -- built by hand, or on the official site -- rather than only ever
+    tracking a squad this tool recommended itself.
+
+    `free_transfers` can't be read off this endpoint (it depends on rollover
+    history and chip usage FPL doesn't expose here), so the caller supplies
+    it directly, same as `team_state_from_squad_result`.
+    """
+    players_by_id = {p["id"]: p for p in players}
+    teams_by_id = {t["id"]: t for t in teams}
+
+    squad: list[OwnedPlayer] = []
+    captain_id: int | None = None
+    vice_captain_id: int | None = None
+
+    for pick in picks_data["picks"]:
+        element_id = pick["element"]
+        player = players_by_id[element_id]
+        team = teams_by_id[player["team"]]
+        squad.append(
+            OwnedPlayer(
+                element_id=element_id,
+                web_name=player["web_name"],
+                position=POSITIONS[player["element_type"]],
+                team_id=team["id"],
+                team_short=team["short_name"],
+                now_cost=player["now_cost"] / 10.0,
+                is_starting=pick["multiplier"] > 0,
+            )
+        )
+        if pick["is_captain"]:
+            captain_id = element_id
+        if pick["is_vice_captain"]:
+            vice_captain_id = element_id
+
+    if captain_id is None or vice_captain_id is None:
+        raise ValueError("Picks data is missing a captain or vice-captain -- can't import this squad.")
+
+    if bank is None:
+        bank = picks_data["entry_history"]["bank"] / 10.0
+
+    return TeamState(
+        squad=squad,
+        captain_id=captain_id,
+        vice_captain_id=vice_captain_id,
         bank=bank,
         free_transfers=free_transfers,
     )

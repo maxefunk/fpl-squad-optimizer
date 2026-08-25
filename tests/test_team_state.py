@@ -9,6 +9,7 @@ from fpl_forecast.team_state import (
     load_team,
     record_gameweek,
     save_team,
+    team_state_from_entry_picks,
     team_state_from_squad_result,
 )
 from tests.conftest import make_player
@@ -141,3 +142,68 @@ def test_current_squad_value_uses_live_prices_with_fallback():
 
     expected = 999.0 + sum(p.now_cost for p in state.squad if p.element_id != some_id)
     assert value == pytest.approx(expected)
+
+
+# -- team_state_from_entry_picks (importing a real FPL manager's squad) ------
+
+
+def _fake_bootstrap_players_and_teams():
+    positions = {1: 1, 2: 1, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2, 8: 3, 9: 3, 10: 3, 11: 3, 12: 3, 13: 4, 14: 4, 15: 4}
+    players = [
+        {"id": eid, "web_name": f"Player{eid}", "element_type": pos, "team": (eid % 5) + 1, "now_cost": 50 + eid}
+        for eid, pos in positions.items()
+    ]
+    teams = [{"id": tid, "short_name": f"T{tid}"} for tid in range(1, 6)]
+    return players, teams
+
+
+def _fake_picks_data(bank_tenths=15, captain_id=1, vice_captain_id=2, bench_ids=(12, 13, 14, 15)):
+    picks = []
+    for eid in range(1, 16):
+        picks.append(
+            {
+                "element": eid,
+                "position": eid,
+                "multiplier": 0 if eid in bench_ids else (2 if eid == captain_id else 1),
+                "is_captain": eid == captain_id,
+                "is_vice_captain": eid == vice_captain_id,
+            }
+        )
+    return {"picks": picks, "entry_history": {"bank": bank_tenths, "value": 1000}}
+
+
+def test_team_state_from_entry_picks_builds_squad_with_correct_flags():
+    players, teams = _fake_bootstrap_players_and_teams()
+    picks_data = _fake_picks_data(bank_tenths=23, captain_id=1, vice_captain_id=2, bench_ids=(12, 13, 14, 15))
+
+    state = team_state_from_entry_picks(picks_data, players, teams, free_transfers=2)
+
+    assert len(state.squad) == 15
+    assert state.captain_id == 1
+    assert state.vice_captain_id == 2
+    assert state.free_transfers == 2
+    assert state.bank == pytest.approx(2.3)  # 23 tenths -> £2.3m
+
+    bench_ids = {p.element_id for p in state.squad if not p.is_starting}
+    assert bench_ids == {12, 13, 14, 15}
+    starter = next(p for p in state.squad if p.element_id == 1)
+    assert starter.web_name == "Player1"
+    assert starter.position == "GK"
+    assert starter.now_cost == pytest.approx(5.1)  # now_cost 51 (tenths) -> £5.1m
+
+
+def test_team_state_from_entry_picks_bank_override():
+    players, teams = _fake_bootstrap_players_and_teams()
+    picks_data = _fake_picks_data()
+
+    state = team_state_from_entry_picks(picks_data, players, teams, free_transfers=1, bank=9.9)
+
+    assert state.bank == pytest.approx(9.9)
+
+
+def test_team_state_from_entry_picks_requires_a_captain():
+    players, teams = _fake_bootstrap_players_and_teams()
+    picks_data = _fake_picks_data(captain_id=-1, vice_captain_id=-1)  # no pick matches -1
+
+    with pytest.raises(ValueError):
+        team_state_from_entry_picks(picks_data, players, teams, free_transfers=1)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fpl_forecast.formatting_html import render_html
-from fpl_forecast.optimizer import optimize_squad
+from fpl_forecast.optimizer import optimize_squad, optimize_transfers
 from fpl_forecast.scoring import build_fixture_ticker
 from tests.conftest import make_player
 
@@ -188,3 +188,67 @@ def _make_minimal_result():
         make_player(15, "FWD", 5, 4.5, 3.0),
     ]
     return optimize_squad(pool, budget=100.0, max_per_club=3)
+
+
+def test_render_html_without_transfer_shows_link_to_transfers_page():
+    html = render_html(_make_minimal_result(), gameweek=1)
+
+    assert "transfers.html" in html
+    assert "Suggest my transfers" in html
+    assert "Your Transfer Suggestions" not in html
+    assert "Suggested transfers" not in html
+
+
+def _transfer_pool_with_an_obvious_upgrade():
+    """A worse-value 15 (the "currently owned" squad) plus one clearly
+    better-value same-position, same-cost replacement not yet owned, so
+    optimize_transfers has an obvious, unambiguous swap to suggest."""
+    pool = [
+        make_player(1, "GK", 1, 4.5, 5.0),
+        make_player(2, "GK", 2, 4.0, 1.0),
+        make_player(3, "DEF", 1, 4.0, 5.0),
+        make_player(4, "DEF", 2, 4.0, 4.0),
+        make_player(5, "DEF", 3, 4.0, 3.0),
+        make_player(6, "DEF", 4, 4.0, 2.0),
+        make_player(7, "DEF", 5, 4.0, 1.0, web_name="WeakLink"),
+        make_player(8, "MID", 3, 4.5, 5.0),
+        make_player(9, "MID", 4, 4.5, 4.0),
+        make_player(10, "MID", 5, 4.5, 3.0),
+        make_player(11, "MID", 1, 4.5, 2.0),
+        make_player(12, "MID", 2, 4.5, 1.0),
+        make_player(13, "FWD", 3, 4.5, 5.0),
+        make_player(14, "FWD", 4, 4.5, 4.0),
+        make_player(15, "FWD", 5, 4.5, 3.0),
+        make_player(107, "DEF", 5, 4.0, 8.0, web_name="Upgrade"),  # same cost as WeakLink, far better
+    ]
+    current_squad_ids = {p.element_id for p in pool if p.web_name != "Upgrade"}
+    return pool, current_squad_ids
+
+
+def test_render_html_with_transfer_shows_summary_and_backlink():
+    pool, current_squad_ids = _transfer_pool_with_an_obvious_upgrade()
+    budget = sum(p.now_cost for eid in current_squad_ids for p in pool if p.element_id == eid)
+
+    tr = optimize_transfers(pool, current_squad_ids, free_transfers=1, budget=budget)
+    assert tr.transfers_made >= 1  # sanity check on the fixture itself
+
+    html = render_html(tr.result, gameweek=2, transfer=tr)
+
+    assert "Your Transfer Suggestions" in html
+    assert "Suggested transfers" in html
+    assert "Back to the full squad report" in html
+    assert "index.html" in html
+    assert "WeakLink" in html and "OUT" in html
+    assert "Upgrade" in html and "IN" in html
+
+
+def test_render_html_with_transfer_no_changes_shows_no_beneficial_message():
+    pool, current_squad_ids = _transfer_pool_with_an_obvious_upgrade()
+    budget = sum(p.now_cost for eid in current_squad_ids for p in pool if p.element_id == eid)
+
+    tr = optimize_transfers(pool, current_squad_ids, free_transfers=1, budget=budget, max_transfers=0)
+    assert tr.transfers_made == 0
+
+    html = render_html(tr.result, gameweek=2, transfer=tr)
+
+    assert "No beneficial transfers found" in html

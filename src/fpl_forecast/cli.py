@@ -336,6 +336,7 @@ def cmd_transfers(args: argparse.Namespace) -> int:
             fixture_ticker=ticker,
             gw_fixtures=gw_fixtures,
             teams_lookup=teams_lookup,
+            transfer=tr,
         )
         print(f"\nHTML report written to {args.html}")
 

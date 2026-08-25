@@ -175,6 +175,26 @@ progresses. To turn it on (one-time, repo-admin only):
 3. The report will be live at `https://<owner>.github.io/fpl-squad-optimizer/`
    and refresh automatically every day at 09:00 UTC after that.
 
+**Getting personal transfer suggestions from the hosted site** (no CLI,
+no chat session) works the same way, via a second workflow,
+`.github/workflows/publish-transfers.yml`:
+
+1. **Actions → Suggest my transfers → Run workflow**.
+2. Fill in your **FPL team ID** (the number in your team's URL on the FPL
+   website), your current **free transfers** (check the FPL app/site --
+   this isn't available from the API), and optionally a target gameweek.
+3. Run it. It imports your real squad (`import-team`), suggests transfers
+   (`transfers`), and publishes the result to
+   `https://<owner>.github.io/fpl-squad-optimizer/transfers.html`, with a
+   link back to the main report and vice versa.
+
+Because a GitHub Pages deployment replaces the *entire* site each time,
+the main report's daily refresh re-downloads whatever transfers page is
+currently live and republishes it unchanged alongside the new report, so
+routine refreshes never silently delete your last transfer suggestion --
+see the comment at the top of `publish-report.yml`. The transfers page
+itself only updates when you deliberately re-run "Suggest my transfers".
+
 ### Backtesting
 
 `scripts/backtest.py` runs the model against a **completed** gameweek and

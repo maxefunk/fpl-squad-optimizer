@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from html import escape
 
 from fpl_forecast.constants import FIXTURE_TICKER_GWS, POSITION_ORDER
-from fpl_forecast.models import PlayerScore, SquadResult
+from fpl_forecast.models import PlayerScore, SquadResult, TransferResult
 
 _POSITION_LABELS = {"GK": "Goalkeepers", "DEF": "Defenders", "MID": "Midfielders", "FWD": "Forwards"}
 
@@ -405,6 +405,59 @@ def _glossary_html() -> str:
     """
 
 
+def _transfer_summary_html(transfer: TransferResult) -> str:
+    if transfer.transfers_made == 0:
+        body = '<p class="transfer-none">No beneficial transfers found -- your current squad is already the best use of this budget.</p>'
+    else:
+        pairs = "".join(
+            f"""
+            <div class="transfer-pair">
+              <div class="transfer-side transfer-out">
+                <span class="transfer-tag">OUT</span>
+                {escape(out_p.web_name)} <span class="reasoning-sub">({escape(out_p.position)}, {escape(out_p.team_short)} &middot; £{out_p.now_cost:.1f}m &middot; {out_p.xpts:.2f} pts)</span>
+              </div>
+              <div class="transfer-side transfer-in">
+                <span class="transfer-tag">IN</span>
+                {escape(in_p.web_name)} <span class="reasoning-sub">({escape(in_p.position)}, {escape(in_p.team_short)} &middot; £{in_p.now_cost:.1f}m &middot; {in_p.xpts:.2f} pts)</span>
+              </div>
+            </div>
+            """
+            for out_p, in_p in zip(
+                sorted(transfer.transfers_out, key=lambda p: p.position),
+                sorted(transfer.transfers_in, key=lambda p: p.position),
+            )
+        )
+        hit_note = (
+            f"{transfer.hits} hit{'s' if transfer.hits != 1 else ''} (&minus;{transfer.hit_points:.0f} pts)"
+            if transfer.hits
+            else "no hits -- within your free transfers"
+        )
+        body = f"""
+        <p class="transfer-meta">{transfer.transfers_made} transfer{'s' if transfer.transfers_made != 1 else ''} suggested, {hit_note}.
+        Bank remaining: £{transfer.bank_remaining:.1f}m.</p>
+        {pairs}
+        """
+    return f"""
+    <div class="transfer-summary">
+      <h2>Suggested transfers</h2>
+      {body}
+    </div>
+    """
+
+
+def _cross_link_html(is_transfers_page: bool) -> str:
+    if is_transfers_page:
+        return '<div class="cross-link"><a href="index.html">&larr; Back to the full squad report</a></div>'
+    return """
+    <div class="cross-link">
+      Want transfer suggestions against your own squad instead of a fresh build?
+      <a href="transfers.html">View your transfer suggestions</a>
+      (run the <strong>Suggest my transfers</strong> workflow from the Actions tab first if this is your first visit --
+      it asks for your FPL team ID and free transfers, then publishes that page).
+    </div>
+    """
+
+
 def render_html(
     result: SquadResult,
     gameweek: int,
@@ -413,6 +466,7 @@ def render_html(
     fixture_ticker: dict[int, list[dict]] | None = None,
     gw_fixtures: list[dict] | None = None,
     teams_lookup: dict[int, str] | None = None,
+    transfer: TransferResult | None = None,
 ) -> str:
     if generated_at is None:
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -444,12 +498,14 @@ def render_html(
 
     budget_pct = min(100.0, (result.total_cost / result.budget * 100.0) if result.budget else 0.0)
     squad_ids = {p.element_id for p in result.squad}
+    page_title = "FPL Transfers" if transfer is not None else "FPL Squad"
+    heading = "Your Transfer Suggestions" if transfer is not None else "FPL Squad Recommendation"
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>FPL Squad — Gameweek {gameweek}</title>
+<title>{page_title} — Gameweek {gameweek}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {{
@@ -629,12 +685,42 @@ def render_html(
   .reasoning-block li {{ margin-bottom: 0.2rem; }}
 
   footer {{ color: var(--text-dim); font-size: 0.75rem; margin-top: 2rem; text-align: center; }}
+
+  .cross-link {{
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px;
+    padding: 0.75rem 1rem; margin-bottom: 1.5rem; font-size: 0.85rem; color: var(--text-dim);
+  }}
+  .cross-link a {{ color: var(--accent); font-weight: 600; text-decoration: none; }}
+  .cross-link a:hover {{ text-decoration: underline; }}
+
+  .transfer-summary {{
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px;
+    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }}
+  .transfer-meta {{ color: var(--text-dim); font-size: 0.9rem; margin: 0 0 0.75rem; }}
+  .transfer-none {{ color: var(--text-dim); margin: 0; }}
+  .transfer-pair {{
+    display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; align-items: center;
+    padding: 0.5rem 0; border-top: 1px solid var(--panel-border);
+  }}
+  .transfer-pair:first-of-type {{ border-top: none; }}
+  .transfer-side {{ display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }}
+  .transfer-tag {{
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+    padding: 0.1rem 0.45rem; border-radius: 5px; flex-shrink: 0;
+  }}
+  .transfer-out .transfer-tag {{ background: rgba(224,82,82,0.18); color: var(--risk); }}
+  .transfer-in .transfer-tag {{ background: rgba(52,211,153,0.18); color: var(--accent); }}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>FPL Squad Recommendation</h1>
+  <h1>{heading}</h1>
   <div class="subtitle">Gameweek {gameweek}</div>
+
+  {_cross_link_html(is_transfers_page=transfer is not None)}
+
+  {_transfer_summary_html(transfer) if transfer is not None else ""}
 
   <div class="summary">
     <div class="stat">
@@ -704,6 +790,7 @@ def write_html(
     fixture_ticker: dict[int, list[dict]] | None = None,
     gw_fixtures: list[dict] | None = None,
     teams_lookup: dict[int, str] | None = None,
+    transfer: TransferResult | None = None,
 ) -> None:
     html = render_html(
         result,
@@ -713,6 +800,7 @@ def write_html(
         fixture_ticker=fixture_ticker,
         gw_fixtures=gw_fixtures,
         teams_lookup=teams_lookup,
+        transfer=transfer,
     )
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)

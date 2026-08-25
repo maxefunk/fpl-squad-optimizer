@@ -1,0 +1,84 @@
+name: Suggest my transfers
+
+# Self-service transfer suggestions from the GitHub UI, no local setup or
+# chat session needed: Actions tab -> "Suggest my transfers" -> Run workflow
+# -> fill in your FPL team ID and free transfers -> a personal transfers
+# page gets published alongside the main squad report.
+#
+# Note: GitHub Pages deploys replace the *entire* site content each time,
+# so a later run of the main "Publish squad report" workflow (publish-
+# report.yml) would otherwise silently delete this page again. The
+# "Preserve" step below re-downloads whatever transfers page is currently
+# live before regenerating index.html, so a plain report refresh never
+# wipes out your last transfer suggestion.
+on:
+  workflow_dispatch:
+    inputs:
+      team_id:
+        description: "Your public FPL team ID (the number in your team's URL on the FPL website)"
+        required: true
+        type: string
+      free_transfers:
+        description: "Free transfers you currently have available (check the FPL app/website -- not available from the API)"
+        required: true
+        type: string
+      gameweek:
+        description: "Gameweek to plan transfers for (leave blank for the next unplayed GW)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e . -r requirements.txt
+
+      - name: Import team and suggest transfers
+        run: |
+          mkdir -p public
+          GW_FLAG=""
+          if [ -n "${{ inputs.gameweek }}" ]; then
+            GW_FLAG="--gameweek ${{ inputs.gameweek }}"
+          fi
+          python -m fpl_forecast import-team \
+            --team-id "${{ inputs.team_id }}" \
+            --free-transfers "${{ inputs.free_transfers }}"
+          python -m fpl_forecast transfers $GW_FLAG --html public/transfers.html
+
+      - name: Refresh the main squad report too
+        run: |
+          GW_FLAG=""
+          if [ -n "${{ inputs.gameweek }}" ]; then
+            GW_FLAG="--gameweek ${{ inputs.gameweek }}"
+          fi
+          python -m fpl_forecast recommend $GW_FLAG --html public/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

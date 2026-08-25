@@ -35,9 +35,20 @@ jobs:
       - name: Install dependencies
         run: pip install -e . -r requirements.txt
 
-      - name: Generate report
+      - name: Preserve any previously-published transfers page
+        # GitHub Pages deploys replace the entire site each time. This job
+        # never regenerates transfers.html itself (that only happens via
+        # the "Suggest my transfers" workflow, which needs your FPL team
+        # ID) -- so without this step, this routine report refresh would
+        # silently delete it from the live site. -f + `|| true`: fine if
+        # it doesn't exist yet, nothing to preserve.
         run: |
           mkdir -p public
+          curl -sf "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/transfers.html" \
+            -o public/transfers.html || true
+
+      - name: Generate report
+        run: |
           GW_FLAG=""
           if [ -n "${{ inputs.gameweek }}" ]; then
             GW_FLAG="--gameweek ${{ inputs.gameweek }}"

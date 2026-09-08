@@ -89,9 +89,9 @@
   </div>
 
   <div class="panel" id="relay-panel">
-    <h2 style="margin-top:0">One-time setup: relay URL</h2>
+    <h2 style="margin-top:0">Relay URL (already set up for you)</h2>
     <p style="color:var(--text-dim);font-size:0.88rem;margin:0 0 0.5rem">
-      Your browser can't call the official FPL API directly (it doesn't allow cross-site requests). This page needs the URL of a small relay that forwards requests to it — see the README for how to deploy your own free one in a few minutes. If someone already gave you a relay URL, paste it below.
+      Your browser can't call the official FPL API directly (it doesn't allow cross-site requests), so this page talks to it through a small relay — already deployed below, nothing for you to do. Only change this if it ever stops working (rate-limited, taken down, etc.) or you'd rather run your own — the README explains how to deploy a free one in a few minutes.
     </p>
     <label for="relay-url">Relay URL</label>
     <input id="relay-url" type="text" placeholder="https://your-relay.your-subdomain.workers.dev">
@@ -185,9 +185,13 @@
 
   const $ = (id) => document.getElementById(id);
 
-  // -- relay URL, remembered per-browser (see README: this is a per-visitor
-  // convenience, not shared state -- everyone using this page needs a relay
-  // URL, but nothing here is synced between visitors or back to Claude) ----
+  // -- relay URL: defaults to a shared relay already deployed for this
+  // site, so most visitors never need to touch this. Overridable and
+  // remembered per-browser (see README: this is a per-visitor convenience,
+  // not shared state -- an override here is never synced anywhere else) --
+  // in case the default one is ever unreachable, rate-limited, or you'd
+  // rather run your own.
+  const DEFAULT_RELAY_URL = "https://fpl-relay.maxefunk.workers.dev";
   const RELAY_KEY = "fpl-builder-relay-url";
   function loadRelayUrl() {
     try { return localStorage.getItem(RELAY_KEY) || ""; } catch { return ""; }
@@ -195,7 +199,7 @@
   function saveRelayUrl(url) {
     try { localStorage.setItem(RELAY_KEY, url); } catch { /* private browsing etc. -- fine, just won't persist */ }
   }
-  $("relay-url").value = loadRelayUrl();
+  $("relay-url").value = loadRelayUrl() || DEFAULT_RELAY_URL;
   $("save-relay-btn").addEventListener("click", () => {
     saveRelayUrl($("relay-url").value.trim());
     $("relay-status").textContent = "Saved.";

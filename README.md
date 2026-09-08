@@ -213,13 +213,25 @@ CLI, the two workflows above) aren't affected -- only in-browser `fetch()`
 calls are. `cloudflare-worker/fpl-relay.js` is a small relay whose only
 job is forwarding an allowed FPL API path and adding the one header that
 unblocks it; it runs no scoring or optimization logic itself, and never
-sees or stores a squad. Deploy your own free one:
+sees or stores a squad.
+
+**One relay is already deployed and wired in as the default**
+(`DEFAULT_RELAY_URL` in `build.html`), so a typical visitor doesn't need
+to do anything -- the "Relay URL" box on the page is pre-filled and only
+needs touching if that default ever stops working or you'd rather run
+your own. To deploy a replacement or an additional one:
 
 1. Create a free account at [dash.cloudflare.com](https://dash.cloudflare.com) (no card needed).
 2. **Workers & Pages → Create → Create Worker**. Give it any name, click **Deploy** to get a starting placeholder live.
 3. Click **Edit code**, delete the placeholder, and paste in the contents of `cloudflare-worker/fpl-relay.js`.
 4. Click **Deploy**. Copy the `https://<your-worker>.<your-subdomain>.workers.dev` URL it gives you.
-5. Open `public/build.html` (once published via GitHub Pages), paste that URL into the one-time "Relay URL" box, and click **Save** -- it's remembered in your browser for next time.
+5. Either update `DEFAULT_RELAY_URL` in `public/build.html` to that URL (so it becomes the new default for everyone), or just paste it into the page's "Relay URL" box yourself and click **Save** -- remembered in your browser only, doesn't affect other visitors.
+
+Worth knowing: since every visitor defaults to the *same* relay, all of
+their traffic runs through one Cloudflare account's free tier (100,000
+requests/day). Realistic personal-and-friends use won't come close to
+that, but if this page ever gets shared much more widely, that shared
+default is the thing to watch.
 
 **Why this needed a different solver.** The MILP is identical in shape to
 `optimizer.py`'s (same squad/xi/captain binaries, same captain-doubling

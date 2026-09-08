@@ -453,7 +453,9 @@ def _cross_link_html(is_transfers_page: bool) -> str:
       Want transfer suggestions against your own squad instead of a fresh build?
       <a href="transfers.html">View your transfer suggestions</a>
       (run the <strong>Suggest my transfers</strong> workflow from the Actions tab first if this is your first visit --
-      it asks for your FPL team ID and free transfers, then publishes that page).
+      it asks for your FPL team ID and free transfers, then publishes that page) &mdash;
+      or use the <a href="build.html">interactive builder</a>, which runs directly in your own
+      browser and works for anyone with the link, not just repo admins.
     </div>
     """
 

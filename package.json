@@ -1,0 +1,12 @@
+{
+  "name": "fpl-squad-optimizer-browser-tool",
+  "private": true,
+  "type": "module",
+  "description": "Dev tooling only, for testing the client-side port in public/js/ (scripts/test-js-model.mjs). Not a build step -- public/build.html loads glpk.js from a CDN directly; nothing here is bundled or shipped.",
+  "scripts": {
+    "test:js": "node scripts/test-js-model.mjs"
+  },
+  "devDependencies": {
+    "glpk.js": "^5.0.0"
+  }
+}

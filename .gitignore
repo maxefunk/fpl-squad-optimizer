@@ -15,3 +15,8 @@ data/*
 my_team.json
 
 .DS_Store
+
+# JS test tooling for public/js/ (see package.json) -- not shipped;
+# public/build.html loads glpk.js from a CDN, this is dev-only.
+node_modules/
+package-lock.json

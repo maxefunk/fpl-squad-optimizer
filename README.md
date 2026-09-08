@@ -195,6 +195,69 @@ routine refreshes never silently delete your last transfer suggestion --
 see the comment at the top of `publish-report.yml`. The transfers page
 itself only updates when you deliberately re-run "Suggest my transfers".
 
+### Browser tool (`public/build.html`)
+
+Both options above need someone with write access to *this* repository to
+click "Run workflow" -- fine for one person's own use, not for "anyone
+with the link". `public/build.html` is a from-scratch, entirely
+client-side port that works for **any visitor**, with no GitHub account
+and nothing to trigger on their behalf: they open the page, optionally
+enter an FPL team ID, and everything -- fetching data, scoring every
+player, solving the squad/transfer MILP -- runs in their own browser.
+It's linked from the main report's cross-link banner once deployed.
+
+**Why this needed a relay.** The official FPL API doesn't send the CORS
+headers a browser requires before letting JavaScript on another origin
+(like a GitHub Pages site) read the response. Server-to-server calls (the
+CLI, the two workflows above) aren't affected -- only in-browser `fetch()`
+calls are. `cloudflare-worker/fpl-relay.js` is a small relay whose only
+job is forwarding an allowed FPL API path and adding the one header that
+unblocks it; it runs no scoring or optimization logic itself, and never
+sees or stores a squad. Deploy your own free one:
+
+1. Create a free account at [dash.cloudflare.com](https://dash.cloudflare.com) (no card needed).
+2. **Workers & Pages → Create → Create Worker**. Give it any name, click **Deploy** to get a starting placeholder live.
+3. Click **Edit code**, delete the placeholder, and paste in the contents of `cloudflare-worker/fpl-relay.js`.
+4. Click **Deploy**. Copy the `https://<your-worker>.<your-subdomain>.workers.dev` URL it gives you.
+5. Open `public/build.html` (once published via GitHub Pages), paste that URL into the one-time "Relay URL" box, and click **Save** -- it's remembered in your browser for next time.
+
+**Why this needed a different solver.** The MILP is identical in shape to
+`optimizer.py`'s (same squad/xi/captain binaries, same captain-doubling
+and bench-quality objective terms, same ownership floor/force-include
+constraints), but PuLP/CBC only runs server-side. A pure-JavaScript
+solver ([`javascript-lp-solver`](https://www.npmjs.com/package/javascript-lp-solver))
+was tried first and benchmarked: it didn't finish solving a realistic-scale
+problem (~620 players, ~1,860 binary variables) in over two minutes.
+[`glpk.js`](https://www.npmjs.com/package/glpk.js) -- a WebAssembly build
+of the real GLPK solver -- solves the same problem in ~100-200ms, fully
+client-side, and is loaded straight from a CDN in `build.html` with no
+build step.
+
+**Deliberate simplifications vs. the full tool** (see the module docstring
+at the top of `public/js/fpl-model.js` for the complete rationale): to
+avoid hundreds of per-player relay round-trips from a visitor's browser,
+the browser tool never fetches `element-summary` (per-gameweek history).
+Concretely:
+
+- **Form** uses FPL's own precomputed `form` field directly, instead of
+  recomputing a recency-weighted average from per-GW history.
+- **No gameweek-1 fallback**: there's no `history_past` lookup, so
+  attacking threat and season/form numbers are only as good as the live
+  bootstrap fields -- fine from gameweek 2 onward, weak at gameweek 1.
+  Since checking transfers already implies owning a squad (gameweek 2+),
+  this lines up with the tool's main use case.
+- **No set-piece taker bonus** (needs free-text parsing of a separate
+  endpoint, skipped for scope).
+
+Everything else -- the fixture-adjusted model component with FDR blend,
+confidence shrinkage, availability/ownership floor and cap, the
+fixture-run lookahead, and the full MILP (captain bonus, bench quality,
+ownership floor, force-include-most-owned) -- is a faithful,
+constants-for-constants port. `scripts/test-js-model.mjs` (`npm run
+test:js`, needs `npm install` once) hand-verifies the same scenarios the
+Python test suite does for the equivalent logic, including a byte-for-byte
+repeat of the captain-bonus tie-break regression test.
+
 ### Backtesting
 
 `scripts/backtest.py` runs the model against a **completed** gameweek and
@@ -484,6 +547,15 @@ instead of choosing a transfer count heuristically.
 
 ## Known limitations
 
+- **The browser tool (`public/build.html`) is a simplified port, not a
+  full reimplementation** -- see its README section above for the exact
+  list. In short: form comes from FPL's own live field rather than a
+  recomputed recency curve, there's no gameweek-1 fallback to last
+  season's data, and there's no set-piece-taker bonus. It also depends on
+  a relay you (or whoever shared the link) must deploy separately, and
+  every visitor solves the MILP fresh in their own browser rather than
+  once server-side -- fine at real-world scale (~100-200ms per solve) but
+  a real architectural difference worth knowing about.
 - **The ownership credibility cap (see "Ownership caps a stale squad-role
   signal" above) can suppress a genuine low-owned differential**, not just
   the stale-minutes-signal case it's meant to catch — there's no way to

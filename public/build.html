@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FPL Squad Builder — runs in your browser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #121a2b;
+    --panel-border: #23304a;
+    --text: #eef2fb;
+    --text-dim: #9fb0cc;
+    --accent: #34d399;
+    --gold: #f5c542;
+    --risk: #e05252;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.05rem; color: var(--text-dim); font-weight: 600; margin: 1.5rem 0 0.75rem; }
+  .subtitle { color: var(--text-dim); margin-bottom: 1.5rem; }
+  a { color: var(--accent); }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px;
+    padding: 1.25rem; margin-bottom: 1.25rem;
+  }
+  .panel.warn { border-color: rgba(224,82,82,0.4); background: rgba(224,82,82,0.08); }
+  .panel.note { border-color: rgba(245,197,66,0.4); background: rgba(245,197,66,0.08); font-size: 0.9rem; }
+
+  label { display: block; font-size: 0.8rem; color: var(--text-dim); margin: 0.75rem 0 0.3rem; }
+  input, select {
+    width: 100%; background: #0e1626; border: 1px solid var(--panel-border); border-radius: 8px;
+    padding: 0.55rem 0.7rem; color: var(--text); font-size: 0.95rem;
+  }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .row > div { flex: 1 1 160px; }
+
+  .mode-toggle { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .mode-toggle button {
+    flex: 1; padding: 0.6rem; border-radius: 8px; border: 1px solid var(--panel-border);
+    background: #0e1626; color: var(--text-dim); cursor: pointer; font-size: 0.9rem;
+  }
+  .mode-toggle button.active { background: var(--accent); color: #06150c; font-weight: 600; border-color: var(--accent); }
+
+  .go-btn {
+    width: 100%; margin-top: 1.25rem; padding: 0.8rem; border-radius: 10px; border: none;
+    background: var(--accent); color: #06150c; font-weight: 700; font-size: 1rem; cursor: pointer;
+  }
+  .go-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .status { margin-top: 0.9rem; font-size: 0.88rem; color: var(--text-dim); white-space: pre-line; }
+  .status.error { color: var(--risk); }
+
+  #results { display: none; }
+  .summary { display: flex; flex-wrap: wrap; gap: 1rem; }
+  .summary .stat { min-width: 140px; }
+  .summary .stat .label { color: var(--text-dim); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .summary .stat .value { font-size: 1.1rem; font-weight: 600; margin-top: 0.1rem; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.5rem; }
+  th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--panel-border); }
+  th { color: var(--text-dim); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+  .bench-row td { color: var(--text-dim); }
+  .tag { font-size: 0.68rem; padding: 0.1rem 0.4rem; border-radius: 5px; margin-left: 0.4rem; }
+  .tag.c { background: var(--gold); color: #241b00; }
+  .tag.vc { background: #4b5878; color: var(--text); }
+
+  .transfer-pair { display: flex; gap: 1.5rem; padding: 0.4rem 0; border-top: 1px solid var(--panel-border); font-size: 0.9rem; }
+  .transfer-pair:first-child { border-top: none; }
+  .out-tag { color: var(--risk); font-weight: 700; font-size: 0.7rem; }
+  .in-tag { color: var(--accent); font-weight: 700; font-size: 0.7rem; }
+
+  footer { color: var(--text-dim); font-size: 0.75rem; margin-top: 2.5rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FPL Squad Builder</h1>
+  <div class="subtitle">Runs entirely in your browser — nothing is sent to any server except the official FPL API (through a small relay, for technical reasons explained below).</div>
+
+  <div class="panel note">
+    <strong>What this is:</strong> a self-service version of this project's squad recommender and transfer suggester that anyone can use directly from this page — no GitHub account, no command line. It's a deliberately simplified port (see the README's "Browser tool" section for exactly what differs from the full version) — most accurate from <strong>gameweek 2 onward</strong>, once real in-season data exists. All scoring and optimization happens on your own device.
+  </div>
+
+  <div class="panel" id="relay-panel">
+    <h2 style="margin-top:0">One-time setup: relay URL</h2>
+    <p style="color:var(--text-dim);font-size:0.88rem;margin:0 0 0.5rem">
+      Your browser can't call the official FPL API directly (it doesn't allow cross-site requests). This page needs the URL of a small relay that forwards requests to it — see the README for how to deploy your own free one in a few minutes. If someone already gave you a relay URL, paste it below.
+    </p>
+    <label for="relay-url">Relay URL</label>
+    <input id="relay-url" type="text" placeholder="https://your-relay.your-subdomain.workers.dev">
+    <button class="go-btn" id="save-relay-btn" type="button" style="margin-top:0.75rem">Save</button>
+    <div class="status" id="relay-status"></div>
+  </div>
+
+  <div class="panel">
+    <div class="mode-toggle">
+      <button type="button" id="mode-recommend" class="active">Build a squad from scratch</button>
+      <button type="button" id="mode-transfers">Check my transfers</button>
+    </div>
+
+    <div id="recommend-fields">
+      <div class="row">
+        <div>
+          <label for="budget">Budget (£m)</label>
+          <input id="budget" type="number" value="100.0" step="0.1">
+        </div>
+        <div>
+          <label for="max-per-club">Max per club</label>
+          <input id="max-per-club" type="number" value="3" step="1">
+        </div>
+        <div>
+          <label for="gw-recommend">Gameweek (blank = next)</label>
+          <input id="gw-recommend" type="number" placeholder="auto">
+        </div>
+      </div>
+    </div>
+
+    <div id="transfers-fields" style="display:none">
+      <div class="row">
+        <div>
+          <label for="team-id">Your FPL team ID</label>
+          <input id="team-id" type="number" placeholder="e.g. 1234567">
+        </div>
+        <div>
+          <label for="free-transfers">Free transfers</label>
+          <input id="free-transfers" type="number" value="1" step="1">
+        </div>
+        <div>
+          <label for="gw-transfers">Gameweek (blank = next)</label>
+          <input id="gw-transfers" type="number" placeholder="auto">
+        </div>
+      </div>
+      <div class="status" style="margin-top:0.5rem">Find your team ID: log into the FPL website (not the app) on desktop, click "Points", and look at the address bar — it's the number after <code>/entry/</code>.</div>
+    </div>
+
+    <button class="go-btn" id="go-btn" type="button">Build my squad</button>
+    <div class="status" id="run-status"></div>
+  </div>
+
+  <div id="results">
+    <div class="panel" id="transfer-summary-panel" style="display:none">
+      <h2 style="margin-top:0">Suggested transfers</h2>
+      <div id="transfer-summary-body"></div>
+    </div>
+
+    <div class="panel">
+      <div class="summary">
+        <div class="stat"><div class="label">Formation</div><div class="value" id="stat-formation">-</div></div>
+        <div class="stat"><div class="label">Captain</div><div class="value" id="stat-captain">-</div></div>
+        <div class="stat"><div class="label">Vice-Captain</div><div class="value" id="stat-vc">-</div></div>
+        <div class="stat"><div class="label">Projected XI points</div><div class="value" id="stat-xi-pts">-</div></div>
+        <div class="stat"><div class="label">Budget used</div><div class="value" id="stat-budget">-</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Starting XI</h2>
+      <table id="xi-table"><thead><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>Proj. pts</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Bench</h2>
+      <table id="bench-table"><thead><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>Proj. pts</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <footer>
+    Client-side build of fpl-squad-optimizer &middot; <a href="index.html">Full report</a> &middot; <a href="transfers.html">Latest server-side transfer suggestion</a><br>
+    Not affiliated with the Premier League or Fantasy Premier League.
+  </footer>
+</div>
+
+<script type="module">
+  import GLPK from "https://cdn.jsdelivr.net/npm/glpk.js@5.0.0/dist/index.js";
+  import { createRelayClient, RelayError } from "./js/fpl-relay-client.js";
+  import { scoreAllPlayers, buildFixtureTicker } from "./js/fpl-model.js";
+  import { optimizeSquad, optimizeTransfers, InfeasibleError } from "./js/fpl-optimizer.js";
+
+  const $ = (id) => document.getElementById(id);
+
+  // -- relay URL, remembered per-browser (see README: this is a per-visitor
+  // convenience, not shared state -- everyone using this page needs a relay
+  // URL, but nothing here is synced between visitors or back to Claude) ----
+  const RELAY_KEY = "fpl-builder-relay-url";
+  function loadRelayUrl() {
+    try { return localStorage.getItem(RELAY_KEY) || ""; } catch { return ""; }
+  }
+  function saveRelayUrl(url) {
+    try { localStorage.setItem(RELAY_KEY, url); } catch { /* private browsing etc. -- fine, just won't persist */ }
+  }
+  $("relay-url").value = loadRelayUrl();
+  $("save-relay-btn").addEventListener("click", () => {
+    saveRelayUrl($("relay-url").value.trim());
+    $("relay-status").textContent = "Saved.";
+    setTimeout(() => { $("relay-status").textContent = ""; }, 2000);
+  });
+
+  // -- mode toggle -----------------------------------------------------
+  let mode = "recommend";
+  $("mode-recommend").addEventListener("click", () => setMode("recommend"));
+  $("mode-transfers").addEventListener("click", () => setMode("transfers"));
+  function setMode(m) {
+    mode = m;
+    $("mode-recommend").classList.toggle("active", m === "recommend");
+    $("mode-transfers").classList.toggle("active", m === "transfers");
+    $("recommend-fields").style.display = m === "recommend" ? "" : "none";
+    $("transfers-fields").style.display = m === "transfers" ? "" : "none";
+    $("go-btn").textContent = m === "recommend" ? "Build my squad" : "Suggest my transfers";
+  }
+
+  function resolveDefaultGameweek(events) {
+    for (const e of events) if (e.is_next) return e.id;
+    for (const e of events) if (e.is_current) return e.id;
+    for (const e of events) if (!e.finished) return e.id;
+    return events[events.length - 1].id;
+  }
+  function resolveCurrentOrLastFinishedGameweek(events) {
+    for (const e of events) if (e.is_current) return e.id;
+    const finished = events.filter((e) => e.finished).map((e) => e.id);
+    if (finished.length) return Math.max(...finished);
+    return events[0].id;
+  }
+
+  function setStatus(msg, isError = false) {
+    const el = $("run-status");
+    el.textContent = msg;
+    el.classList.toggle("error", isError);
+  }
+
+  function renderPlayerRows(tbody, players, captainId, viceCaptainId) {
+    tbody.innerHTML = "";
+    for (const p of players) {
+      const tr = document.createElement("tr");
+      let nameCell = p.web_name;
+      if (p.element_id === captainId) nameCell += ' <span class="tag c">C</span>';
+      if (p.element_id === viceCaptainId) nameCell += ' <span class="tag vc">VC</span>';
+      tr.innerHTML = `<td>${nameCell}</td><td>${p.position}</td><td>${p.team_short || ""}</td><td>£${p.now_cost.toFixed(1)}m</td><td>${p.xpts.toFixed(2)}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderResult(result, transfer) {
+    $("stat-formation").textContent = result.formation;
+    $("stat-captain").textContent = result.captain.web_name;
+    $("stat-vc").textContent = result.vice_captain.web_name;
+    $("stat-xi-pts").textContent = result.total_xi_xpts.toFixed(2);
+    $("stat-budget").textContent = `£${result.total_cost.toFixed(1)}m`;
+
+    renderPlayerRows($("xi-table").querySelector("tbody"), result.starting_xi, result.captain.element_id, result.vice_captain.element_id);
+    renderPlayerRows($("bench-table").querySelector("tbody"), result.bench, result.captain.element_id, result.vice_captain.element_id);
+
+    const transferPanel = $("transfer-summary-panel");
+    if (transfer) {
+      transferPanel.style.display = "";
+      const body = $("transfer-summary-body");
+      if (transfer.transfers_made === 0) {
+        body.innerHTML = `<p style="color:var(--text-dim)">No beneficial transfers found — your current squad is already the best use of this budget.</p>`;
+      } else {
+        const hitNote = transfer.hits
+          ? `${transfer.hits} hit${transfer.hits !== 1 ? "s" : ""} (&minus;${transfer.hit_points.toFixed(0)} pts)`
+          : "no hits — within your free transfers";
+        let html = `<p style="color:var(--text-dim);font-size:0.9rem">${transfer.transfers_made} transfer${transfer.transfers_made !== 1 ? "s" : ""} suggested, ${hitNote}. Bank remaining: £${transfer.bank_remaining.toFixed(1)}m.</p>`;
+        const outs = [...transfer.transfers_out].sort((a, b) => a.position.localeCompare(b.position));
+        const ins = [...transfer.transfers_in].sort((a, b) => a.position.localeCompare(b.position));
+        for (let i = 0; i < outs.length; i++) {
+          html += `<div class="transfer-pair">
+            <div><span class="out-tag">OUT</span> ${outs[i].web_name} (${outs[i].position}, £${outs[i].now_cost.toFixed(1)}m, ${outs[i].xpts.toFixed(2)} pts)</div>
+            <div><span class="in-tag">IN</span> ${ins[i].web_name} (${ins[i].position}, £${ins[i].now_cost.toFixed(1)}m, ${ins[i].xpts.toFixed(2)} pts)</div>
+          </div>`;
+        }
+        body.innerHTML = html;
+      }
+    } else {
+      transferPanel.style.display = "none";
+    }
+
+    $("results").style.display = "";
+  }
+
+  $("go-btn").addEventListener("click", async () => {
+    const relayUrl = $("relay-url").value.trim();
+    if (!relayUrl) {
+      setStatus("Set your relay URL above first (one-time setup).", true);
+      return;
+    }
+
+    $("go-btn").disabled = true;
+    $("results").style.display = "none";
+
+    try {
+      const relay = createRelayClient(relayUrl);
+
+      setStatus("Fetching player and fixture data...");
+      const [bootstrap, fixtures] = await Promise.all([relay.getBootstrapStatic(), relay.getFixtures()]);
+      const players = bootstrap.elements.filter((p) => p.status !== "u");
+
+      setStatus("Initializing the solver (first run downloads ~300KB, then it's cached)...");
+      const glpk = await GLPK();
+
+      if (mode === "recommend") {
+        const gwInput = $("gw-recommend").value;
+        const gw = gwInput ? parseInt(gwInput, 10) : resolveDefaultGameweek(bootstrap.events);
+        const gwFixtures = fixtures.filter((f) => f.event === gw);
+        const ticker = buildFixtureTicker(bootstrap.teams, fixtures, gw, 5);
+
+        setStatus(`Scoring ${players.length} players for gameweek ${gw}...`);
+        const scores = scoreAllPlayers(players, bootstrap.teams, gwFixtures, gw, ticker);
+
+        setStatus("Solving for the best squad...");
+        const budget = parseFloat($("budget").value) || 100.0;
+        const maxPerClub = parseInt($("max-per-club").value, 10) || 3;
+        const result = await optimizeSquad(glpk, scores, { budget, maxPerClub });
+
+        setStatus("");
+        renderResult(result, null);
+      } else {
+        const teamId = $("team-id").value.trim();
+        if (!teamId) {
+          setStatus("Enter your FPL team ID first.", true);
+          $("go-btn").disabled = false;
+          return;
+        }
+        const freeTransfers = parseInt($("free-transfers").value, 10) || 0;
+        const gwInput = $("gw-transfers").value;
+        const gw = gwInput ? parseInt(gwInput, 10) : resolveCurrentOrLastFinishedGameweek(bootstrap.events);
+
+        setStatus(`Importing your squad (team ${teamId}, gameweek ${gw})...`);
+        const [picksData, entry] = await Promise.all([relay.getEntryPicks(teamId, gw), relay.getEntry(teamId)]);
+        const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
+        const currentSquadIds = new Set(picksData.picks.map((pk) => pk.element));
+        const bank = picksData.entry_history.bank / 10.0;
+        const currentSquadValue = picksData.picks.reduce((s, pk) => {
+          const p = playersById[pk.element];
+          return s + (p ? p.now_cost / 10.0 : 0);
+        }, 0);
+        const budget = currentSquadValue + bank;
+
+        const gwFixtures = fixtures.filter((f) => f.event === gw);
+        const ticker = buildFixtureTicker(bootstrap.teams, fixtures, gw, 5);
+
+        setStatus(`Scoring ${players.length} players for gameweek ${gw}...`);
+        const scores = scoreAllPlayers(players, bootstrap.teams, gwFixtures, gw, ticker);
+
+        setStatus("Solving for the best transfers...");
+        const tr = await optimizeTransfers(glpk, scores, currentSquadIds, freeTransfers, budget);
+
+        setStatus("");
+        renderResult(tr.result, tr);
+      }
+    } catch (err) {
+      if (err instanceof RelayError) {
+        setStatus(`Relay problem: ${err.message}`, true);
+      } else if (err instanceof InfeasibleError) {
+        setStatus(`Couldn't find a valid squad: ${err.message}`, true);
+      } else {
+        setStatus(`Something went wrong: ${err.message}`, true);
+        console.error(err);
+      }
+    } finally {
+      $("go-btn").disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

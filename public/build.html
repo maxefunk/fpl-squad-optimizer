@@ -322,8 +322,9 @@
         const maxPerClub = parseInt($("max-per-club").value, 10) || 3;
         const result = await optimizeSquad(glpk, scores, { budget, maxPerClub });
 
-        setStatus("");
+        setStatus("Done.");
         renderResult(result, null);
+        $("results").scrollIntoView({ behavior: "smooth", block: "start" });
       } else {
         const teamId = $("team-id").value.trim();
         if (!teamId) {
@@ -355,8 +356,9 @@
         setStatus("Solving for the best transfers...");
         const tr = await optimizeTransfers(glpk, scores, currentSquadIds, freeTransfers, budget);
 
-        setStatus("");
+        setStatus("Done.");
         renderResult(tr.result, tr);
+        $("results").scrollIntoView({ behavior: "smooth", block: "start" });
       }
     } catch (err) {
       if (err instanceof RelayError) {

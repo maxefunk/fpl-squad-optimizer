@@ -185,6 +185,30 @@
 
   const $ = (id) => document.getElementById(id);
 
+  // -- surface every failure, not just the ones caught inside the click
+  // handler's try/catch. An error thrown from a promise that nothing is
+  // awaiting (e.g. inside a library's internal .then()), or from an event
+  // listener elsewhere on the page, would otherwise vanish silently: no
+  // status update, nothing in the console error UI, just "nothing happens"
+  // when you click the button -- exactly what's been reported. --
+  window.addEventListener("error", (event) => {
+    console.error("[build.html] uncaught error:", event.error || event.message);
+    setStatus(`Unexpected error: ${(event.error && event.error.message) || event.message}`, true);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    console.error("[build.html] unhandled promise rejection:", reason);
+    setStatus(`Unexpected error: ${(reason && reason.message) || reason}`, true);
+  });
+
+  function withTimeout(promise, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} took longer than ${ms / 1000}s -- it may be stuck. Try reloading the page.`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   // -- relay URL: defaults to a shared relay already deployed for this
   // site, so most visitors never need to touch this. Overridable and
   // remembered per-browser (see README: this is a per-visitor convenience,
@@ -302,11 +326,19 @@
       const relay = createRelayClient(relayUrl);
 
       setStatus("Fetching player and fixture data...");
-      const [bootstrap, fixtures] = await Promise.all([relay.getBootstrapStatic(), relay.getFixtures()]);
+      console.log("[build.html] fetching bootstrap-static + fixtures...");
+      const [bootstrap, fixtures] = await withTimeout(
+        Promise.all([relay.getBootstrapStatic(), relay.getFixtures()]),
+        20000,
+        "Fetching player and fixture data"
+      );
       const players = bootstrap.elements.filter((p) => p.status !== "u");
+      console.log(`[build.html] got ${players.length} players, ${fixtures.length} fixtures`);
 
       setStatus("Initializing the solver (first run downloads ~300KB, then it's cached)...");
-      const glpk = await GLPK();
+      console.log("[build.html] initializing GLPK...");
+      const glpk = await withTimeout(GLPK(), 20000, "Initializing the solver");
+      console.log("[build.html] GLPK ready");
 
       if (mode === "recommend") {
         const gwInput = $("gw-recommend").value;
@@ -316,11 +348,13 @@
 
         setStatus(`Scoring ${players.length} players for gameweek ${gw}...`);
         const scores = scoreAllPlayers(players, bootstrap.teams, gwFixtures, gw, ticker);
+        console.log(`[build.html] scored ${scores.length} players`);
 
         setStatus("Solving for the best squad...");
         const budget = parseFloat($("budget").value) || 100.0;
         const maxPerClub = parseInt($("max-per-club").value, 10) || 3;
-        const result = await optimizeSquad(glpk, scores, { budget, maxPerClub });
+        const result = await withTimeout(optimizeSquad(glpk, scores, { budget, maxPerClub }), 20000, "Solving for the best squad");
+        console.log("[build.html] optimizeSquad resolved", result);
 
         setStatus("Done.");
         renderResult(result, null);
@@ -337,7 +371,13 @@
         const gw = gwInput ? parseInt(gwInput, 10) : resolveCurrentOrLastFinishedGameweek(bootstrap.events);
 
         setStatus(`Importing your squad (team ${teamId}, gameweek ${gw})...`);
-        const [picksData, entry] = await Promise.all([relay.getEntryPicks(teamId, gw), relay.getEntry(teamId)]);
+        console.log(`[build.html] fetching entry ${teamId} picks for gw ${gw}...`);
+        const [picksData, entry] = await withTimeout(
+          Promise.all([relay.getEntryPicks(teamId, gw), relay.getEntry(teamId)]),
+          20000,
+          "Importing your squad"
+        );
+        console.log("[build.html] got picks + entry", picksData, entry);
         const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
         const currentSquadIds = new Set(picksData.picks.map((pk) => pk.element));
         const bank = picksData.entry_history.bank / 10.0;
@@ -352,9 +392,15 @@
 
         setStatus(`Scoring ${players.length} players for gameweek ${gw}...`);
         const scores = scoreAllPlayers(players, bootstrap.teams, gwFixtures, gw, ticker);
+        console.log(`[build.html] scored ${scores.length} players`);
 
         setStatus("Solving for the best transfers...");
-        const tr = await optimizeTransfers(glpk, scores, currentSquadIds, freeTransfers, budget);
+        const tr = await withTimeout(
+          optimizeTransfers(glpk, scores, currentSquadIds, freeTransfers, budget),
+          20000,
+          "Solving for the best transfers"
+        );
+        console.log("[build.html] optimizeTransfers resolved", tr);
 
         setStatus("Done.");
         renderResult(tr.result, tr);

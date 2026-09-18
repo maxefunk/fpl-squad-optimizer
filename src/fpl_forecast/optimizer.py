@@ -124,7 +124,12 @@ def optimize_squad(
         most_owned = max(players, key=lambda p: p.selected_by_percent)
         prob += squad_vars[most_owned.element_id] == 1
 
-    solver = pulp.PULP_CBC_CMD(msg=False)
+    # HiGHS via highspy, not PuLP's default PULP_CBC_CMD: PuLP only bundles
+    # an x86_64 CBC binary for macOS, so PULP_CBC_CMD is simply unusable on
+    # Apple Silicon (it looks for a solverdir/cbc/osx/arm64/cbc that was
+    # never shipped -- see https://github.com/coin-or/pulp/issues/765).
+    # highspy ships real compiled wheels per platform, arm64 macOS included.
+    solver = pulp.HiGHS(msg=False)
     prob.solve(solver)
 
     status = pulp.LpStatus[prob.status]
@@ -274,7 +279,9 @@ def optimize_transfers(
     if max_transfers is not None:
         prob += transfers_made_expr <= max_transfers
 
-    solver = pulp.PULP_CBC_CMD(msg=False)
+    # See the matching comment in optimize_squad: HiGHS instead of PuLP's
+    # default CBC binary, which isn't usable on Apple Silicon Macs.
+    solver = pulp.HiGHS(msg=False)
     prob.solve(solver)
 
     status = pulp.LpStatus[prob.status]

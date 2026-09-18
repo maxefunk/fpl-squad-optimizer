@@ -12,6 +12,7 @@ license = { text = "MIT" }
 dependencies = [
     "requests>=2.31",
     "pulp>=2.8",
+    "highspy>=1.7.2",
 ]
 
 [project.scripts]

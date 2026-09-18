@@ -236,7 +236,7 @@ default is the thing to watch.
 **Why this needed a different solver.** The MILP is identical in shape to
 `optimizer.py`'s (same squad/xi/captain binaries, same captain-doubling
 and bench-quality objective terms, same ownership floor/force-include
-constraints), but PuLP/CBC only runs server-side. A pure-JavaScript
+constraints), but PuLP/HiGHS only runs server-side. A pure-JavaScript
 solver ([`javascript-lp-solver`](https://www.npmjs.com/package/javascript-lp-solver))
 was tried first and benchmarked: it didn't finish solving a realistic-scale
 problem (~620 players, ~1,860 binary variables) in over two minutes.
@@ -500,7 +500,10 @@ does a best-effort, case-insensitive name match against the text following
 
 ### Optimization
 
-A proper constrained MILP solver (**PuLP**, using the bundled CBC solver),
+A proper constrained MILP solver (**PuLP**, using the **HiGHS** solver via
+the `highspy` package — not PuLP's default bundled CBC binary, which is
+x86_64-only on macOS and simply doesn't run on Apple Silicon; see
+[coin-or/pulp#765](https://github.com/coin-or/pulp/issues/765)),
 not a greedy heuristic — see
 [`src/fpl_forecast/optimizer.py`](src/fpl_forecast/optimizer.py). One
 integer program selects the 15-man squad **and** the starting XI

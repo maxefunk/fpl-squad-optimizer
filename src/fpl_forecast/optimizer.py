@@ -139,8 +139,15 @@ def optimize_squad(
             "Try relaxing the budget or check that enough priced players are available."
         )
 
-    squad = [by_id[eid] for eid, var in squad_vars.items() if var.value() == 1]
-    starting_xi = [by_id[eid] for eid, var in xi_vars.items() if var.value() == 1]
+    # > 0.5, not == 1: a solved binary variable can come back as e.g.
+    # 0.999999997 rather than bit-exact 1.0 depending on the solver's
+    # internal tolerances -- exact equality silently dropped players from
+    # `squad` while `starting_xi` (a separate variable, evaluated
+    # independently) still included them, undercounting total_cost by
+    # whatever that player's price was. Caught via a real run's "Budget
+    # used" not matching the sum of its own displayed player prices.
+    squad = [by_id[eid] for eid, var in squad_vars.items() if var.value() > 0.5]
+    starting_xi = [by_id[eid] for eid, var in xi_vars.items() if var.value() > 0.5]
     bench = [p for p in squad if p not in starting_xi]
 
     return _finalize_result(squad, starting_xi, bench, budget)
@@ -292,8 +299,9 @@ def optimize_transfers(
             "bank is enough to field a valid squad."
         )
 
-    squad = [by_id[eid] for eid, var in squad_vars.items() if var.value() == 1]
-    starting_xi = [by_id[eid] for eid, var in xi_vars.items() if var.value() == 1]
+    # See the matching comment in optimize_squad: > 0.5, not == 1.
+    squad = [by_id[eid] for eid, var in squad_vars.items() if var.value() > 0.5]
+    starting_xi = [by_id[eid] for eid, var in xi_vars.items() if var.value() > 0.5]
     bench = [p for p in squad if p not in starting_xi]
 
     new_squad_ids = {p.element_id for p in squad}
